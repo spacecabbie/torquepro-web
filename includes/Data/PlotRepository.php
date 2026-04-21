@@ -223,17 +223,17 @@ class PlotRepository
         $useF = defined('USE_FAHRENHEIT')        && USE_FAHRENHEIT;
 
         if (!$srcF && $useF) {
-            return [fn(float $t): float => $t * 9.0 / 5.0 + 32.0, ' [&deg;F]'];
+            return [fn(float $t): float => $t * 9.0 / 5.0 + 32.0, ' [°F]'];
         }
 
         if ($srcF && $useF) {
-            return [fn(float $t): float => $t, ' [&deg;F]'];
+            return [fn(float $t): float => $t, ' [°F]'];
         }
 
         if ($srcF && !$useF) {
-            return [fn(float $t): float => ($t - 32.0) * 5.0 / 9.0, ' [&deg;C]'];
+            return [fn(float $t): float => ($t - 32.0) * 5.0 / 9.0, ' [°C]'];
         }
 
-        return [fn(float $t): float => $t, ' [&deg;C]'];
+        return [fn(float $t): float => $t, ' [°C]'];
     }
 }
