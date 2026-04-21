@@ -51,8 +51,6 @@ $sids        = $sessionData['sids'];
 $seshdates   = $sessionData['dates'];
 $seshsizes   = $sessionData['sizes'];
 
-$_SESSION['recent_session_id'] = !empty($sids) ? strval(max($sids)) : '';
-
 // ── Resolve requested session ID ───────────────────────────────────────────
 $session_id = '';
 if (isset($_POST['id'])) {
@@ -63,11 +61,11 @@ if (isset($_POST['id'])) {
 $hasSession = $session_id !== '';
 
 // ── Delete action  (origin: del_session.php) ───────────────────────────────
-// Forms pass the session ID in the query string, not the POST body.
+// Forms pass the session ID as a POST hidden input.
 $manager  = new SessionManager($pdo);
 $deleteId = '';
-if (isset($_GET['deletesession'])) {
-    $deleteId = preg_replace('/\D/', '', $_GET['deletesession']) ?? '';
+if (isset($_POST['deletesession'])) {
+    $deleteId = preg_replace('/\D/', '', $_POST['deletesession']) ?? '';
 }
 if ($deleteId !== '') {
     $manager->delete($deleteId);
@@ -82,11 +80,11 @@ if ($deleteId !== '') {
 // ── Merge action  (origin: merge_sessions.php) ─────────────────────────────
 $mergeId     = '';
 $mergeWithId = '';
-if (isset($_GET['mergesession'])) {
-    $mergeId = preg_replace('/\D/', '', $_GET['mergesession']) ?? '';
+if (isset($_POST['mergesession'])) {
+    $mergeId = preg_replace('/\D/', '', $_POST['mergesession']) ?? '';
 }
-if (isset($_GET['mergesessionwith'])) {
-    $mergeWithId = preg_replace('/\D/', '', $_GET['mergesessionwith']) ?? '';
+if (isset($_POST['mergesessionwith'])) {
+    $mergeWithId = preg_replace('/\D/', '', $_POST['mergesessionwith']) ?? '';
 }
 if ($mergeId !== '' && $mergeWithId !== '') {
     $mergedId = $manager->merge($mergeId, $mergeWithId, $sids);
@@ -167,11 +165,11 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
     <title>Torque Dashboard</title>
 
     <!-- Bootstrap 5 -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/5.3.8/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/5.3.8/css/bootstrap.min.css" integrity="sha512-2bBQCjcnw658Lho4nlXJcc6WkV/UxpE/sAokbXPxQNGqmNdQrWqtw26Ns9kFF/yG792pKR1Sx8/Y1Lf1XN4GKA==" crossorigin="anonymous" referrerpolicy="no-referrer">
     <!-- Leaflet -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" integrity="sha512-h9FcoyWjHcOcmEVkxOfTLnmZFWIH0iZhZT1H2TbOq55xssQGEJHEaIm+PgoUaZbRvQTNTluNOEfb1ZRy6D3BOw==" crossorigin="anonymous" referrerpolicy="no-referrer">
     <!-- Chosen -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chosen/1.8.7/chosen.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chosen/1.8.7/chosen.min.css" integrity="sha512-yVvxUQV0QESBt1SyZbNJMAwyKvFTLMyXSyBHDO4BG5t7k/Lw34tyqlSDlKIrIENIzCl+RVUNjmCPG+V/GMesRw==" crossorigin="anonymous" referrerpolicy="no-referrer">
     <!-- Google Font -->
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
 
@@ -291,7 +289,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
             <option value=""></option>
             <?php foreach ($seshdates as $dateid => $datestr): ?>
                 <option value="<?php echo $dateid; ?>"
-                    <?php if ($dateid == ($session_id ?? '')) echo 'selected'; ?>>
+                    <?php if ($dateid === ($session_id ?? '')) echo 'selected'; ?>>
                     <?php echo htmlspecialchars($datestr);
                           if (SHOW_SESSION_LENGTH) echo $seshsizes[$dateid]; ?>
                 </option>
@@ -304,15 +302,18 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
     <div class="section-title">Actions</div>
     <div class="d-grid gap-1">
         <form method="post"
-              action="dashboard.php?mergesession=<?php echo $session_id; ?>&mergesessionwith=<?php echo $session_id_next; ?>"
+              action="dashboard.php"
               id="form-merge">
+            <input type="hidden" name="mergesession" value="<?php echo htmlspecialchars($session_id, ENT_QUOTES, 'UTF-8'); ?>">
+            <input type="hidden" name="mergesessionwith" value="<?php echo htmlspecialchars((string)$session_id_next, ENT_QUOTES, 'UTF-8'); ?>">
             <button class="btn btn-sm btn-outline-secondary w-100"
                     type="submit" <?php if (!$session_id_next) echo 'disabled'; ?>>
                 Merge with next
             </button>
         </form>
-        <form method="post" action="dashboard.php?deletesession=<?php echo $session_id; ?>"
+        <form method="post" action="dashboard.php"
               id="form-delete">
+            <input type="hidden" name="deletesession" value="<?php echo htmlspecialchars($session_id, ENT_QUOTES, 'UTF-8'); ?>">
             <button class="btn btn-sm btn-outline-danger w-100" type="submit">
                 Delete session
             </button>
@@ -320,10 +321,10 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
     </div>
     <script>
     document.getElementById('form-merge')?.addEventListener('submit', e => {
-        if (!confirm('Merge sessions "<?php echo addslashes($seshdates[$session_id]); ?>" and "<?php echo $session_id_next ? addslashes($seshdates[$session_id_next]) : ''; ?>"?')) e.preventDefault();
+        if (!confirm(<?php echo json_encode('Merge sessions "' . ($seshdates[$session_id] ?? '') . '" and "' . ($session_id_next ? ($seshdates[$session_id_next] ?? '') : '') . '"?'); ?>)) e.preventDefault();
     });
     document.getElementById('form-delete')?.addEventListener('submit', e => {
-        if (!confirm('Delete session "<?php echo addslashes($seshdates[$session_id]); ?>"?')) e.preventDefault();
+        if (!confirm(<?php echo json_encode('Delete session "' . ($seshdates[$session_id] ?? '') . '"?'); ?>)) e.preventDefault();
     });
     </script>
     <?php endif; ?>
@@ -385,14 +386,14 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
         <?php if ($hasSession && $plotData !== null): ?>
         <div class="col-6 col-lg-3">
             <div class="stat-card bg-speed">
-                <div class="stat-label"><?php echo strip_tags(substr($v1_label, 1, -1)); ?></div>
+                <div class="stat-label"><?php echo htmlspecialchars(substr($v1_label, 1, -1), ENT_QUOTES, 'UTF-8'); ?></div>
                 <div class="stat-value"><?php echo $avg1; ?></div>
                 <div class="stat-sub">avg &nbsp;·&nbsp; <?php echo $min1; ?> – <?php echo $max1; ?></div>
             </div>
         </div>
         <div class="col-6 col-lg-3">
             <div class="stat-card bg-temp">
-                <div class="stat-label"><?php echo strip_tags(substr($v2_label, 1, -1)); ?></div>
+                <div class="stat-label"><?php echo htmlspecialchars(substr($v2_label, 1, -1), ENT_QUOTES, 'UTF-8'); ?></div>
                 <div class="stat-value"><?php echo $avg2; ?></div>
                 <div class="stat-sub">avg &nbsp;·&nbsp; <?php echo $min2; ?> – <?php echo $max2; ?></div>
             </div>
@@ -530,11 +531,11 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
 </main>
 
 <!-- ══════════════════════════════════ SCRIPTS ═══════════════════════════════ -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.14.1/jquery-ui.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/5.3.8/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/chosen/1.8.7/chosen.jquery.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js" integrity="sha512-v2CJ7UaYy4JwqLDIrZUI/4hqeoQieOmAZNXBeQyjo21dadnwR+8ZaIJVT8EE2iyI61OV8e6M8PP2/4hpQINQ/g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.14.1/jquery-ui.min.js" integrity="sha512-MSOo1aY+3pXCOCdGAYoBZ6YGI0aragoQsg1mKKBHXCYPIWxamwOE7Drh+N5CPgGI5SA9IEKJiPjdfqWFWmZtRA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/5.3.8/js/bootstrap.bundle.min.js" integrity="sha512-HvOjJrdwNpDbkGJIG2ZNqDlVqMo77qbs4Me4cah0HoDrfhrbA+8SBlZn1KrvAQw7cILLPFJvdwIgphzQmMm+Pw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chosen/1.8.7/chosen.jquery.min.js" integrity="sha512-rMGGF4wg1R73ehtnxXBt5mbUfN9JUJwbk21KMlnLZDJh7BkPmeovBuddZCENJddHYYMkCh9hPFnPmS9sspki8g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" integrity="sha512-puJW3E/qXDqYp9IfhAI54BJEaWIfloJ7JWs7OeD5i6ruC9JZL1gERT1wjtwXFlh7CjE7ZJ+/vcRZRkIYIb6p4g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="static/js/jquery.peity.min.js"></script>
 
 <?php if ($hasSession && !empty($d1) && !empty($d2)): ?>
@@ -550,7 +551,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
 <!-- Timezone detection (runs once if timezone not set) -->
 <script>
 $(function() {
-    if ("<?php echo $timezone; ?>".length === 0) {
+    if (<?php echo json_encode($timezone); ?>.length === 0) {
         var tz   = "GMT " + -(new Date().getTimezoneOffset() / 60);
         var tzurl = location.pathname + '?settz=1';
         $.get(tzurl, {time: tz}, function() { location.reload(); });

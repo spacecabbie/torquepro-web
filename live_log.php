@@ -83,7 +83,7 @@ if (isset($_GET['data'])) {
         );
     } catch (Throwable $e) {
         http_response_code(500);
-        echo json_encode(['error' => $e->getMessage()]);
+        echo json_encode(['error' => 'Internal server error']);
     }
     exit;
 }
@@ -251,7 +251,7 @@ const statusDot = document.getElementById('status-dot');
 const logWrap   = document.getElementById('log-wrap');
 
 // ── Utils ───────────────────────────────────────────────────────────────
-function esc(s){ if(s==null)return''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function esc(s){ if(s==null)return''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 const T={hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false};
 const DT={year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false};
@@ -405,8 +405,13 @@ function appendRows(rows){
 function poll(){
   if(paused)return;
   fetch('live_log.php?data=1&since_id='+sinceId,{credentials:'same-origin'})
-    .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    .then(function(r){
+      if(r.status===401){ location.href='login.php'; return null; }
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return r.json();
+    })
     .then(function(d){
+      if(!d) return;
       if(d.error) throw new Error(d.error);
       setOk();
       if(d.col_names) Object.assign(colNames,d.col_names);
@@ -450,8 +455,12 @@ logWrap.addEventListener('scroll',function(){
 
 // ── Boot ─────────────────────────────────────────────────────────────────
 fetch('live_log.php?data=1&since_id=0',{credentials:'same-origin'})
-  .then(function(r){ return r.json(); })
+  .then(function(r){
+    if(r.status===401){ location.href='login.php'; return null; }
+    return r.json();
+  })
   .then(function(d){
+    if(!d) return;
     if(d.col_names) Object.assign(colNames,d.col_names);
     if(d.rows&&d.rows.length) appendRows(d.rows);
     startPolling();

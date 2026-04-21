@@ -38,20 +38,16 @@ $stmt->execute([':sid' => $session_id]);
 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 if ($filetype === 'csv') {
-    $output = '';
+    // UTF-8 BOM so Excel opens the file with correct encoding.
+    $output = "\xEF\xBB\xBF";
 
     if (!empty($rows)) {
-        // Column headings from the first row's keys.
-        foreach (array_keys($rows[0]) as $heading) {
-            $output .= '"' . str_replace('"', '""', (string) $heading) . '",';
-        }
-        $output .= "\n";
-
+        $escapeCsv = static fn (mixed $v): string => '"' . str_replace('"', '""', (string) $v) . '"';
+        // Column headings
+        $output .= implode(',', array_map($escapeCsv, array_keys($rows[0]))) . "\n";
+        // Data rows
         foreach ($rows as $row) {
-            foreach ($row as $cell) {
-                $output .= '"' . str_replace('"', '""', (string) $cell) . '",';
-            }
-            $output .= "\n";
+            $output .= implode(',', array_map($escapeCsv, $row)) . "\n";
         }
     }
 
@@ -65,7 +61,7 @@ if ($filetype === 'csv') {
     $jsonfilename = 'torque_session_' . $session_id . '.json';
     header('Content-Type: application/json');
     header('Content-Disposition: attachment; filename="' . $jsonfilename . '"');
-    echo json_encode($rows, JSON_THROW_ON_ERROR);
+    echo json_encode($rows, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
     exit;
 
 } else {
