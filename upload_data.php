@@ -33,199 +33,219 @@ use TorqueLogs\Database\Connection;
 Auth::checkApp();
 
 $pdo = Connection::get();
-$pdo->beginTransaction();
+
+// ── Capture raw request metadata ───────────────────────────────────────────
+$rawQueryString = $_SERVER['QUERY_STRING'] ?? '';
+$clientIp       = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+$deviceId       = md5($_GET['id'] ?? '');
+$sessionId      = $_GET['session'] ?? null;
+$eml            = $_GET['eml'] ?? null;
+$profileName    = $_GET['profileName'] ?? null;
+// Torque sends Unix ms in 'time'. Fall back to current time in ms.
+$timestamp      = isset($_GET['time']) ? (int)$_GET['time'] : (int)(microtime(true) * 1000);
+
+// ── Insert raw audit log BEFORE the main transaction (auto-commit) ─────────
+// This row must survive even if the business-logic transaction is rolled back.
+$stmtRaw = $pdo->prepare("
+    INSERT INTO upload_requests_raw
+        (upload_date, ip, device_id, session_id, raw_query_string, result)
+    VALUES (CURDATE(), :ip, :device_id, :session_id, :raw_query_string, 'ok')
+");
+$stmtRaw->execute([
+    ':ip'               => $clientIp,
+    ':device_id'        => $deviceId,
+    ':session_id'       => $sessionId,
+    ':raw_query_string' => $rawQueryString,
+]);
+$rawUploadId = (int)$pdo->lastInsertId();
 
 try {
-    // ── Capture raw request metadata ───────────────────────────────────────
-    $rawQueryString = $_SERVER['QUERY_STRING'] ?? '';
-    $clientIp       = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-    $deviceId       = md5($_GET['id'] ?? '');
-    $sessionId      = $_GET['session'] ?? null;
-    $eml            = $_GET['eml'] ?? null;
-    $profileName    = $_GET['profileName'] ?? null;
-    // Ensure we always have a timestamp (Torque sends Unix ms). Fallback to now in ms.
-    $timestamp      = isset($_GET['time']) ? (int)$_GET['time'] : (int) (microtime(true) * 1000);
-    $uploadDate     = date('Y-m-d');
-    
-    // ── Insert raw audit log (partitioned for archival) ────────────────────
-    $stmtRaw = $pdo->prepare("
-        INSERT INTO upload_requests_raw 
-        (upload_date, ip, device_id, session_id, raw_query_string, result)
-        VALUES (CURDATE(), :ip, :device_id, :session_id, :raw_query_string, 'ok')
-    ");
-    $stmtRaw->execute([
-        ':ip'               => $clientIp,
-        ':device_id'        => $deviceId,
-        ':session_id'       => $sessionId,
-        ':raw_query_string' => $rawQueryString
-    ]);
-    $rawUploadId = (int)$pdo->lastInsertId();
-    
+    $pdo->beginTransaction();
+
     // ── Extract sensor names from flat keys ────────────────────────────────
-    // Torque sends: userShortName222408=Name, userFullName222408=Description
+    // Torque sends: userShortName222408=ShortLabel, userFullName222408=Description
     // We map these to sensor_key: k222408
-    $sensorNames = [];
+    $sensorNames        = [];
     $sensorDescriptions = [];
-    
+
     foreach ($_GET as $rawKey => $value) {
         if (!is_string($value) || $value === '') {
             continue;
         }
         if (preg_match('/^userShortName(.+)$/', $rawKey, $m)) {
-            $sensorKey = 'k' . $m[1];
-            $sensorNames[$sensorKey] = $value;
+            $sensorNames['k' . $m[1]] = $value;
         } elseif (preg_match('/^userFullName(.+)$/', $rawKey, $m)) {
-            $sensorKey = 'k' . $m[1];
-            $sensorDescriptions[$sensorKey] = $value;
+            $sensorDescriptions['k' . $m[1]] = $value;
         }
     }
-    
+
     // ── UPSERT session ──────────────────────────────────────────────────────
-    // Upsert session even if email is not provided; profileName captured earlier.
+    // Use distinct placeholder names — PDO native mode forbids reusing the same
+    // named placeholder in one statement (emulated mode allows it, native does not).
     if ($sessionId !== null) {
         $stmtSession = $pdo->prepare("
             INSERT INTO sessions (session_id, device_id, start_time, end_time, email, profile_name)
-            VALUES (:session_id, :device_id, FROM_UNIXTIME(:ts / 1000), FROM_UNIXTIME(:ts / 1000), :email, :profile_name)
+            VALUES (:session_id, :device_id, FROM_UNIXTIME(:ts_start / 1000),
+                    FROM_UNIXTIME(:ts_start / 1000), :email, :profile_name)
             ON DUPLICATE KEY UPDATE
-                end_time = FROM_UNIXTIME(:ts / 1000),
+                end_time       = FROM_UNIXTIME(:ts_end / 1000),
                 total_readings = total_readings + 1,
-                profile_name = COALESCE(:profile_name, profile_name)
+                profile_name   = COALESCE(:profile_name_upd, profile_name)
         ");
         $stmtSession->execute([
-            ':session_id'   => $sessionId,
-            ':device_id'    => $deviceId,
-            ':ts'           => $timestamp,
-            ':email'        => $eml,
-            ':profile_name' => $profileName,
+            ':session_id'    => $sessionId,
+            ':device_id'     => $deviceId,
+            ':ts_start'      => $timestamp,
+            ':ts_end'        => $timestamp,
+            ':email'         => $eml,
+            ':profile_name'  => $profileName,
+            ':profile_name_upd' => $profileName,
         ]);
     }
-    
+
     // ── UPSERT sensors + Insert sensor readings ────────────────────────────
-    $sensorCount = 0;
+    $sensorCount    = 0;
     $newSensorCount = 0;
-    $gpsLat = null;
-    $gpsLon = null;
-    
+    $gpsLat         = null;
+    $gpsLon         = null;
+    $gpsAlt         = null;
+    $gpsSpeed       = null;
+
+    // Prepare reusable statements once, outside the per-sensor loop.
+    $stmtCheck   = $pdo->prepare(
+        "SELECT sensor_key FROM sensors WHERE sensor_key = :key"
+    );
+    $stmtReading = $pdo->prepare("
+        INSERT INTO sensor_readings (session_id, timestamp, sensor_key, value)
+        VALUES (:session_id, :timestamp, :sensor_key, :value)
+    ");
+
     foreach ($_GET as $key => $value) {
-        // Only process k* sensor keys (alphanumeric allowed: kd, kf, k222408, etc.)
+        // Only process k* sensor keys (alphanumeric suffix: kd, kff1006, k222408, …)
         if (!preg_match('/^k[0-9A-Za-z]+$/', $key)) {
             continue;
         }
-        
-        // Special handling for GPS coordinates (NOTE: Torque sends lon as kff1005, lat as kff1006)
-        if ($key === 'kff1005') {
-            $gpsLon = (float)$value;  // kff1005 = GPS Longitude
-        } elseif ($key === 'kff1006') {
-            $gpsLat = (float)$value;  // kff1006 = GPS Latitude
+
+        // Skip non-numeric values to prevent silent 0.0 corruption in DECIMAL column.
+        if (!is_numeric($value)) {
+            continue;
         }
-        
+
+        $floatValue = (float)$value;
+
+        // Capture GPS-specific keys for the dedicated gps_points columns.
+        // kff1005 = Longitude, kff1006 = Latitude, kff1010 = Altitude (m),
+        // kff1001 = GPS Speed (km/h)
+        switch ($key) {
+            case 'kff1005': $gpsLon   = $floatValue; break;
+            case 'kff1006': $gpsLat   = $floatValue; break;
+            case 'kff1010': $gpsAlt   = $floatValue; break;
+            case 'kff1001': $gpsSpeed = $floatValue; break;
+        }
+
         $sensorCount++;
-        
-    // Check if sensor exists (schema uses sensor_key as PRIMARY KEY)
-    $stmtCheck = $pdo->prepare("SELECT sensor_key FROM sensors WHERE sensor_key = :key");
-    $stmtCheck->execute([':key' => $key]);
-    $sensorKeyExists = $stmtCheck->fetchColumn();
-        
-        // If sensor doesn't exist, create it
+
+        // Ensure sensor exists in the master registry.
+        $stmtCheck->execute([':key' => $key]);
+        $sensorKeyExists = $stmtCheck->fetchColumn();
+
         if ($sensorKeyExists === false) {
-            $shortName = $sensorNames[$key] ?? $key;
-            $fullName = $sensorDescriptions[$key] ?? null;
-            
             $stmtInsertSensor = $pdo->prepare("
                 INSERT INTO sensors (sensor_key, short_name, full_name, category_id, unit_id)
                 VALUES (:key, :short_name, :full_name, 10, 1)
             ");
             $stmtInsertSensor->execute([
                 ':key'        => $key,
-                ':short_name' => $shortName,
-                ':full_name'  => $fullName
+                ':short_name' => $sensorNames[$key] ?? $key,
+                ':full_name'  => $sensorDescriptions[$key] ?? null,
             ]);
-            $sensorId = $key;
             $newSensorCount++;
-        } else {
-            // Update sensor name if provided and different
-            if (isset($sensorNames[$key])) {
-                $stmtUpdate = $pdo->prepare("
-                    UPDATE sensors 
-                    SET short_name = :name, last_updated = CURRENT_TIMESTAMP
-                    WHERE sensor_key = :key AND short_name != :name
-                ");
-                $stmtUpdate->execute([
-                    ':key'  => $key,
-                    ':name' => $sensorNames[$key]
-                ]);
-            }
-        }
-        
-        // Insert sensor reading (timestamp is BIGINT in Unix milliseconds)
-        if ($sessionId !== null) {
-            $stmtReading = $pdo->prepare("
-                INSERT INTO sensor_readings (session_id, timestamp, sensor_key, value)
-                VALUES (:session_id, :timestamp, :sensor_key, :value)
+        } elseif (isset($sensorNames[$key])) {
+            // Update the short name if Torque supplied one and it has changed.
+            $stmtUpdate = $pdo->prepare("
+                UPDATE sensors
+                SET short_name = :name, last_updated = CURRENT_TIMESTAMP
+                WHERE sensor_key = :key AND short_name != :name
             ");
+            $stmtUpdate->execute([
+                ':key'  => $key,
+                ':name' => $sensorNames[$key],
+            ]);
+        }
+
+        // Insert time-series reading (timestamp stored as BIGINT Unix ms).
+        if ($sessionId !== null) {
             $stmtReading->execute([
                 ':session_id' => $sessionId,
                 ':timestamp'  => $timestamp,
                 ':sensor_key' => $key,
-                ':value'      => (float)$value  // Schema uses DECIMAL(12,4)
+                ':value'      => $floatValue,
             ]);
         }
     }
-    
+
     // ── Insert GPS point if coordinates are present ────────────────────────
-    if ($gpsLat !== null && $gpsLon !== null && $sessionId !== null && $timestamp !== null) {
-        // Skip invalid GPS coordinates (0,0 means no fix)
-        if ($gpsLat != 0.0 && $gpsLon != 0.0) {
-            $stmtGps = $pdo->prepare("
-                INSERT INTO gps_points (session_id, timestamp, latitude, longitude)
-                VALUES (:session_id, :timestamp, :lat, :lon)
-            ");
-            $stmtGps->execute([
-                ':session_id' => $sessionId,
-                ':timestamp'  => $timestamp,
-                ':lat'        => $gpsLat,
-                ':lon'        => $gpsLon
-            ]);
-        }
+    // A (0.0, 0.0) fix means no valid GPS lock; skip it.
+    if ($gpsLat !== null && $gpsLon !== null && $sessionId !== null
+        && ($gpsLat != 0.0 || $gpsLon != 0.0)
+    ) {
+        $stmtGps = $pdo->prepare("
+            INSERT INTO gps_points
+                (session_id, timestamp, latitude, longitude, altitude, speed_kmh)
+            VALUES (:session_id, :timestamp, :lat, :lon, :alt, :speed)
+        ");
+        $stmtGps->execute([
+            ':session_id' => $sessionId,
+            ':timestamp'  => $timestamp,
+            ':lat'        => $gpsLat,
+            ':lon'        => $gpsLon,
+            ':alt'        => $gpsAlt,
+            ':speed'      => $gpsSpeed,
+        ]);
     }
-    
-    // ── Insert processed upload summary ─────────────────────────────────────
-    $stmtProcessed = $pdo->prepare("
-        INSERT INTO upload_requests_processed 
-        (raw_upload_id, session_id, data_timestamp, sensor_count, new_sensors)
-        VALUES (:raw_upload_id, :session_id, :data_timestamp, :sensor_count, :new_sensors)
-    ");
-    $stmtProcessed->execute([
-        ':raw_upload_id'   => $rawUploadId,
-        ':session_id'      => $sessionId ?? '',
-        ':data_timestamp'  => $timestamp,
-        ':sensor_count'    => $sensorCount,
-        ':new_sensors'     => $newSensorCount
-    ]);
-    
+
+    // ── Insert processed upload summary (only when a session is present) ───
+    // upload_requests_processed.session_id has NOT NULL + FK to sessions;
+    // omit the row entirely when no session was supplied.
+    if ($sessionId !== null) {
+        $stmtProcessed = $pdo->prepare("
+            INSERT INTO upload_requests_processed
+                (raw_upload_id, session_id, data_timestamp, sensor_count, new_sensors)
+            VALUES (:raw_upload_id, :session_id, :data_timestamp, :sensor_count, :new_sensors)
+        ");
+        $stmtProcessed->execute([
+            ':raw_upload_id'  => $rawUploadId,
+            ':session_id'     => $sessionId,
+            ':data_timestamp' => $timestamp,
+            ':sensor_count'   => $sensorCount,
+            ':new_sensors'    => $newSensorCount,
+        ]);
+    }
+
     $pdo->commit();
-    
+
 } catch (Throwable $e) {
-    $pdo->rollBack();
-    
-    // Log error to raw audit log
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+
+    // Update the pre-committed raw audit row with the error detail.
+    // The row was inserted before beginTransaction(), so it survived the rollback.
     try {
         $stmtError = $pdo->prepare("
-            UPDATE upload_requests_raw 
-            SET result = 'error', error_msg = :error 
+            UPDATE upload_requests_raw
+            SET result = 'error', error_msg = :error
             WHERE id = :id
         ");
         $stmtError->execute([
-            ':id'    => $rawUploadId ?? 0,
-            ':error' => $e->getMessage()
+            ':id'    => $rawUploadId,
+            ':error' => $e->getMessage(),
         ]);
     } catch (Throwable $logError) {
-        // If logging fails, write to PHP error log
-        error_log("Torque upload error logging failed: " . $logError->getMessage());
+        error_log('Torque upload error logging failed: ' . $logError->getMessage());
     }
-    
-    // Log to PHP error log for debugging
-    error_log("Torque upload error: " . $e->getMessage());
+
+    error_log('Torque upload error: ' . $e->getMessage());
 }
 
 // Return the response required by Torque (always return OK to prevent endless retries)
