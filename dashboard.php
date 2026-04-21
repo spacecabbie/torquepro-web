@@ -13,6 +13,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/includes/config.php';
 require_once __DIR__ . '/includes/Auth/Auth.php';
 require_once __DIR__ . '/includes/Database/Connection.php';
+require_once __DIR__ . '/includes/Helpers/DataHelper.php';
 require_once __DIR__ . '/includes/Data/SessionRepository.php';
 require_once __DIR__ . '/includes/Data/ColumnRepository.php';
 require_once __DIR__ . '/includes/Data/GpsRepository.php';
