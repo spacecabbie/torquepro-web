@@ -83,22 +83,27 @@ class PlotRepository
         // Load Torque key → human-readable label map.
         $jsarr = json_decode(DataHelper::csvToJson($csvPath), true) ?? [];
 
-        // Query sensor_readings table with PIVOT-like query
-                $stmt = $this->pdo->prepare(
-                        "SELECT 
-                                `timestamp` AS time,
-                                MAX(CASE WHEN sensor_key = :v1 THEN value END) AS v1_value,
-                                MAX(CASE WHEN sensor_key = :v2 THEN value END) AS v2_value
-                         FROM sensor_readings
-                         WHERE session_id = :sid
-                             AND sensor_key IN (:v1, :v2)
-                         GROUP BY `timestamp`
-                         ORDER BY `timestamp` DESC"
-                );
+        // Query sensor_readings table with PIVOT-like query.
+        // Note: each named placeholder may only appear once in a PDO statement
+        // (native prepared-statement mode rejects reuse). Use distinct names for
+        // CASE WHEN vs. IN list even though the values are identical.
+        $stmt = $this->pdo->prepare(
+            "SELECT
+                    `timestamp` AS time,
+                    MAX(CASE WHEN sensor_key = :v1_case THEN value END) AS v1_value,
+                    MAX(CASE WHEN sensor_key = :v2_case THEN value END) AS v2_value
+             FROM sensor_readings
+             WHERE session_id = :sid
+                 AND sensor_key IN (:v1_in, :v2_in)
+             GROUP BY `timestamp`
+             ORDER BY `timestamp` DESC"
+        );
         $stmt->execute([
-            ':sid' => $sessionId,
-            ':v1'  => $v1,
-            ':v2'  => $v2
+            ':sid'    => $sessionId,
+            ':v1_case' => $v1,
+            ':v2_case' => $v2,
+            ':v1_in'   => $v1,
+            ':v2_in'   => $v2,
         ]);
 
         [$speedFactor, $speedUnit] = $this->resolveSpeedConversion();

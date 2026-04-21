@@ -38,43 +38,83 @@ if (isset($_GET['data'])) {
     $since_id = isset($_GET['since_id']) ? (int)$_GET['since_id'] : 0;
 
     try {
-        $pdo  = Connection::get();
+        $pdo = Connection::get();
+
+        // ── Upload rows ──────────────────────────────────────────────────
+        // Join upload_requests_processed (LEFT JOIN — raw rows without a session
+        // still appear) and sessions (to surface email + profile_name).
+        // Column aliases mirror the old upload_requests field names so the JS
+        // frontend requires no changes.
         $stmt = $pdo->prepare(
-            'SELECT
-                id, ts, ip, torque_id, eml, app_version,
-                session, data_ts, sensor_count, sensor_data,
-                new_columns, profile_name, result, error_msg
-             FROM upload_requests
-             WHERE id > :since_id
-             ORDER BY id ASC
-             LIMIT 100'
+            "SELECT
+                urr.id,
+                urr.ts,
+                urr.ip,
+                urr.device_id          AS torque_id,
+                COALESCE(ses.email, '') AS eml,
+                urr.session_id         AS session,
+                urp.data_timestamp     AS data_ts,
+                COALESCE(urp.sensor_count, 0) AS sensor_count,
+                COALESCE(urp.new_sensors, 0)  AS new_columns,
+                COALESCE(ses.profile_name, '') AS profile_name,
+                urr.result,
+                urr.error_msg,
+                ''                     AS app_version
+             FROM upload_requests_raw urr
+             LEFT JOIN upload_requests_processed urp
+                    ON urp.raw_upload_id = urr.id
+             LEFT JOIN sessions ses
+                    ON ses.session_id = urr.session_id
+             WHERE urr.id > :since_id
+             ORDER BY urr.id ASC
+             LIMIT 100"
         );
         $stmt->execute([':since_id' => $since_id]);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // ── Per-row sensor snapshot ──────────────────────────────────────
+        // For each upload that has a processed summary, fetch the sensor
+        // readings at that exact timestamp to populate the sensor modal.
+        $sensorStmt = $pdo->prepare(
+            "SELECT sr.sensor_key, sr.value,
+                    COALESCE(s.short_name, sr.sensor_key) AS sensor_name
+             FROM sensor_readings sr
+             LEFT JOIN sensors s ON s.sensor_key = sr.sensor_key
+             WHERE sr.session_id = :sid AND sr.timestamp = :ts"
+        );
 
         foreach ($rows as &$r) {
             $r['id']           = (int)$r['id'];
             $r['sensor_count'] = (int)$r['sensor_count'];
             $r['new_columns']  = (int)$r['new_columns'];
             $r['data_ts']      = $r['data_ts'] !== null ? (int)$r['data_ts'] : null;
-            $r['sensor_data']  = $r['sensor_data'] !== null
-                ? json_decode($r['sensor_data'], true)
-                : null;
+
+            // Build sensor_data map: key => value (matches old JSON blob shape).
+            $r['sensor_data'] = null;
+            if ($r['session'] !== '' && $r['session'] !== null && $r['data_ts'] !== null) {
+                $sensorStmt->execute([':sid' => $r['session'], ':ts' => $r['data_ts']]);
+                $sensorRows = $sensorStmt->fetchAll(PDO::FETCH_ASSOC);
+                if (!empty($sensorRows)) {
+                    $r['sensor_data'] = [];
+                    foreach ($sensorRows as $sr) {
+                        $r['sensor_data'][$sr['sensor_key']] = $sr['value'];
+                    }
+                }
+            }
         }
         unset($r);
 
+        // ── Sensor name lookup table ─────────────────────────────────────
+        // Old code queried INFORMATION_SCHEMA k% COLUMN_COMMENT.
+        // New schema stores names in the sensors table.
         $colNames = [];
-        $cnStmt   = $pdo->prepare(
-            'SELECT COLUMN_NAME, COLUMN_COMMENT
-             FROM INFORMATION_SCHEMA.COLUMNS
-             WHERE TABLE_SCHEMA = DATABASE()
-               AND TABLE_NAME   = :tbl
-               AND COLUMN_NAME  LIKE \'k%\'
-               AND COLUMN_COMMENT <> \'\'' 
-        );
-        $cnStmt->execute([':tbl' => DB_TABLE]);
-        foreach ($cnStmt->fetchAll(PDO::FETCH_ASSOC) as $cn) {
-            $colNames[$cn['COLUMN_NAME']] = $cn['COLUMN_COMMENT'];
+        $cnRows = $pdo->query(
+            "SELECT sensor_key, COALESCE(short_name, sensor_key) AS label
+             FROM sensors
+             ORDER BY sensor_key"
+        )->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($cnRows as $cn) {
+            $colNames[$cn['sensor_key']] = $cn['label'];
         }
 
         echo json_encode(

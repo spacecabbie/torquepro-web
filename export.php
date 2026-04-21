@@ -4,10 +4,12 @@ declare(strict_types=1);
 /**
  * export.php — CSV / JSON export endpoint.
  *
- * Requires browser auth. Exports all sensor rows for a given session as
+ * Requires browser auth. Exports all sensor readings for a given session as
  * either a CSV or JSON file download.
  *
- * Origin: export.php (updated for OOP migration — Step 4)
+ * Row format: session_id, timestamp (Unix ms), sensor_key, short_name, value
+ *
+ * Origin: export.php (updated for normalized schema)
  */
 
 require_once __DIR__ . '/includes/config.php';
@@ -31,8 +33,19 @@ if ($session_id === '') {
 $filetype = $_GET['filetype'] ?? '';
 
 $pdo  = Connection::get();
+
+// Join sensor_readings with sensors to include the human-readable sensor name.
 $stmt = $pdo->prepare(
-    'SELECT * FROM `' . DB_TABLE . '` WHERE session = :sid ORDER BY time DESC'
+    "SELECT
+         sr.session_id,
+         sr.timestamp,
+         sr.sensor_key,
+         COALESCE(s.short_name, sr.sensor_key) AS sensor_name,
+         sr.value
+     FROM sensor_readings sr
+     LEFT JOIN sensors s ON s.sensor_key = sr.sensor_key
+     WHERE sr.session_id = :sid
+     ORDER BY sr.timestamp ASC, sr.sensor_key ASC"
 );
 $stmt->execute([':sid' => $session_id]);
 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);

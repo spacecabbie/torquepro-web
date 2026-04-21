@@ -33,12 +33,12 @@ class GpsRepository
      */
     public function findTrack(string $sessionId): array
     {
-        // Query the gps_points table
+        // Query the gps_points table (timestamp = BIGINT Unix ms, not 'ts')
         $stmt = $this->pdo->prepare(
             "SELECT latitude, longitude
              FROM gps_points
              WHERE session_id = :sid
-             ORDER BY ts DESC"
+             ORDER BY timestamp DESC"
         );
         $stmt->execute([':sid' => $sessionId]);
 
