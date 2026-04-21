@@ -10,7 +10,7 @@ declare(strict_types=1);
  * and are stored as MariaDB column COMMENTs.
  *
  * Auth: Torque-ID based (Auth::checkApp).
- * Logging: PSR-3 FileLogger (daily JSON log).
+ * Audit: AuditLogger stores every request in upload_requests table.
  * SQL safety: SqlHelper::isValidColumnName() + quoteIdentifier().
  *
  * Origin: upload_data.php (updated for OOP migration — Step 4)
@@ -21,24 +21,19 @@ require_once __DIR__ . '/includes/Auth/Auth.php';
 require_once __DIR__ . '/includes/Database/Connection.php';
 require_once __DIR__ . '/includes/Helpers/SqlHelper.php';
 require_once __DIR__ . '/includes/Logging/AuditLogger.php';
-require_once __DIR__ . '/includes/Logging/FileLogger.php';
 
 use TorqueLogs\Auth\Auth;
 use TorqueLogs\Database\Connection;
 use TorqueLogs\Helpers\SqlHelper;
 use TorqueLogs\Logging\AuditLogger;
-use TorqueLogs\Logging\FileLogger;
 
 // ── Auth guard (Torque-ID) ─────────────────────────────────────────────────
 Auth::checkApp();
 
-// ── Logger ─────────────────────────────────────────────────────────────────
-$logger = new FileLogger(
-    UPLOAD_LOG_DIR,
-    'torque_upload'
-);
-
 $pdo = Connection::get();
+
+// ── Capture raw query string ───────────────────────────────────────────────
+$rawQueryString = $_SERVER['QUERY_STRING'] ?? '';
 
 // ============================================================
 // ============================================================
@@ -148,20 +143,16 @@ if (count($_GET) > 0) {
         $stmt         = $pdo->prepare($sql);
         $stmt->execute($params);
         $sensor_count = count($params);
-        $logger->info('upload ok', $_GET);
-        AuditLogger::record($pdo, $_GET, 'ok', $sensor_count, $new_columns, $sensor_map);
+        AuditLogger::record($pdo, $_GET, 'ok', $sensor_count, $new_columns, $sensor_map, null, $rawQueryString);
     } else {
-        $logger->info('upload skipped: no valid sensor keys', $_GET);
-        AuditLogger::record($pdo, $_GET, 'skipped', 0, 0, [], 'No valid sensor keys found in request');
+        AuditLogger::record($pdo, $_GET, 'skipped', 0, 0, [], 'No valid sensor keys found in request', $rawQueryString);
     }
 } else {
-    $logger->info('upload skipped: empty request', $_GET);
-    AuditLogger::record($pdo, $_GET, 'skipped', 0, 0, [], 'Empty GET request');
+    AuditLogger::record($pdo, $_GET, 'skipped', 0, 0, [], 'Empty GET request', $rawQueryString);
 }
 
 } catch (Throwable $e) {
-    $logger->error('upload error: ' . $e->getMessage(), $_GET);
-    AuditLogger::record($pdo, $_GET, 'error', 0, 0, [], $e->getMessage());
+    AuditLogger::record($pdo, $_GET, 'error', 0, 0, [], $e->getMessage(), $rawQueryString);
     // Still return OK so Torque doesn't retry endlessly; error is in the log.
 }
 

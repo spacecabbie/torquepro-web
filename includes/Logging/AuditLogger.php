@@ -26,6 +26,7 @@ class AuditLogger
      * @param  int                  $newColumns
      * @param  array<string, mixed> $sensorMap    Optional map of sensor key → label.
      * @param  string|null          $error        Human-readable error message, if any.
+     * @param  string|null          $rawQuery     Raw QUERY_STRING from $_SERVER.
      * @return void
      */
     public static function record(
@@ -35,7 +36,8 @@ class AuditLogger
         int $sensorCount,
         int $newColumns,
         array $sensorMap = [],
-        ?string $error = null
+        ?string $error = null,
+        ?string $rawQuery = null
     ): void {
         try {
             $sensorJson = $sensorMap
@@ -45,10 +47,10 @@ class AuditLogger
             $stmt = $pdo->prepare(
                 "INSERT INTO `upload_requests`
                     (ip, torque_id, eml, app_version, session, data_ts,
-                     sensor_count, sensor_data, new_columns, profile_name, result, error_msg)
+                     sensor_count, sensor_data, new_columns, profile_name, result, error_msg, raw_query_string)
                  VALUES
                     (:ip, :torque_id, :eml, :app_version, :session, :data_ts,
-                     :sensor_count, :sensor_data, :new_columns, :profile_name, :result, :error_msg)"
+                     :sensor_count, :sensor_data, :new_columns, :profile_name, :result, :error_msg, :raw_query_string)"
             );
             $stmt->execute([
                 ':ip'           => $_SERVER['REMOTE_ADDR'] ?? '',
@@ -63,6 +65,7 @@ class AuditLogger
                 ':profile_name' => $get['profileName'] ?? '',
                 ':result'       => $result,
                 ':error_msg'    => $error,
+                ':raw_query_string' => $rawQuery,
             ]);
         } catch (Throwable) {
             // Audit failure must never abort the main upload response.
