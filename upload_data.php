@@ -42,6 +42,7 @@ try {
     $deviceId       = md5($_GET['id'] ?? '');
     $sessionId      = $_GET['session'] ?? null;
     $eml            = $_GET['eml'] ?? null;
+    $profileName    = $_GET['profileName'] ?? null;
     $timestamp      = isset($_GET['time']) ? (int)$_GET['time'] : null;
     $uploadDate     = date('Y-m-d');
     
@@ -81,17 +82,19 @@ try {
     // ── UPSERT session ──────────────────────────────────────────────────────
     if ($sessionId !== null && $eml !== null) {
         $stmtSession = $pdo->prepare("
-            INSERT INTO sessions (session_id, device_id, start_time, last_update, eml)
-            VALUES (:session_id, :device_id, FROM_UNIXTIME(:ts / 1000), FROM_UNIXTIME(:ts / 1000), :eml)
+            INSERT INTO sessions (session_id, device_id, start_time, end_time, email, profile_name)
+            VALUES (:session_id, :device_id, FROM_UNIXTIME(:ts / 1000), FROM_UNIXTIME(:ts / 1000), :email, :profile_name)
             ON DUPLICATE KEY UPDATE
-                last_update = FROM_UNIXTIME(:ts / 1000),
-                upload_count = upload_count + 1
+                end_time = FROM_UNIXTIME(:ts / 1000),
+                total_readings = total_readings + 1,
+                profile_name = COALESCE(:profile_name, profile_name)
         ");
         $stmtSession->execute([
-            ':session_id' => $sessionId,
-            ':device_id'  => $deviceId,
-            ':ts'         => $timestamp ?? time() * 1000,
-            ':eml'        => $eml
+            ':session_id'   => $sessionId,
+            ':device_id'    => $deviceId,
+            ':ts'           => $timestamp ?? time() * 1000,
+            ':email'        => $eml,
+            ':profile_name' => $profileName
         ]);
     }
     
@@ -107,11 +110,11 @@ try {
             continue;
         }
         
-        // Special handling for GPS coordinates
+        // Special handling for GPS coordinates (NOTE: Torque sends lon as kff1005, lat as kff1006)
         if ($key === 'kff1005') {
-            $gpsLat = (float)$value;
+            $gpsLon = (float)$value;  // kff1005 = GPS Longitude
         } elseif ($key === 'kff1006') {
-            $gpsLon = (float)$value;
+            $gpsLat = (float)$value;  // kff1006 = GPS Latitude
         }
         
         $sensorCount++;
@@ -142,7 +145,7 @@ try {
             if (isset($sensorNames[$key])) {
                 $stmtUpdate = $pdo->prepare("
                     UPDATE sensors 
-                    SET short_name = :name, last_seen = CURRENT_TIMESTAMP
+                    SET short_name = :name, last_updated = CURRENT_TIMESTAMP
                     WHERE sensor_key = :key AND short_name != :name
                 ");
                 $stmtUpdate->execute([
@@ -152,33 +155,36 @@ try {
             }
         }
         
-        // Insert sensor reading
+        // Insert sensor reading (timestamp is BIGINT in Unix milliseconds)
         if ($sessionId !== null && $timestamp !== null) {
             $stmtReading = $pdo->prepare("
-                INSERT INTO sensor_readings (session_id, ts, sensor_key, value)
-                VALUES (:session_id, FROM_UNIXTIME(:ts / 1000), :sensor_key, :value)
+                INSERT INTO sensor_readings (session_id, timestamp, sensor_key, value)
+                VALUES (:session_id, :timestamp, :sensor_key, :value)
             ");
             $stmtReading->execute([
                 ':session_id' => $sessionId,
-                ':ts'         => $timestamp,
+                ':timestamp'  => $timestamp,
                 ':sensor_key' => $key,
-                ':value'      => (string)$value
+                ':value'      => (float)$value  // Schema uses DECIMAL(12,4)
             ]);
         }
     }
     
     // ── Insert GPS point if coordinates are present ────────────────────────
     if ($gpsLat !== null && $gpsLon !== null && $sessionId !== null && $timestamp !== null) {
-        $stmtGps = $pdo->prepare("
-            INSERT INTO gps_points (session_id, ts, latitude, longitude)
-            VALUES (:session_id, FROM_UNIXTIME(:ts / 1000), :lat, :lon)
-        ");
-        $stmtGps->execute([
-            ':session_id' => $sessionId,
-            ':ts'         => $timestamp,
-            ':lat'        => $gpsLat,
-            ':lon'        => $gpsLon
-        ]);
+        // Skip invalid GPS coordinates (0,0 means no fix)
+        if ($gpsLat != 0.0 && $gpsLon != 0.0) {
+            $stmtGps = $pdo->prepare("
+                INSERT INTO gps_points (session_id, timestamp, latitude, longitude)
+                VALUES (:session_id, :timestamp, :lat, :lon)
+            ");
+            $stmtGps->execute([
+                ':session_id' => $sessionId,
+                ':timestamp'  => $timestamp,
+                ':lat'        => $gpsLat,
+                ':lon'        => $gpsLon
+            ]);
+        }
     }
     
     // ── Insert processed upload summary ─────────────────────────────────────
