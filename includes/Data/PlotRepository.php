@@ -84,17 +84,17 @@ class PlotRepository
         $jsarr = json_decode(DataHelper::csvToJson($csvPath), true) ?? [];
 
         // Query sensor_readings table with PIVOT-like query
-        $stmt = $this->pdo->prepare(
-            "SELECT 
-                UNIX_TIMESTAMP(ts) * 1000 AS time,
-                MAX(CASE WHEN sensor_key = :v1 THEN value END) AS v1_value,
-                MAX(CASE WHEN sensor_key = :v2 THEN value END) AS v2_value
-             FROM sensor_readings
-             WHERE session_id = :sid
-               AND sensor_key IN (:v1, :v2)
-             GROUP BY ts
-             ORDER BY ts DESC"
-        );
+                $stmt = $this->pdo->prepare(
+                        "SELECT 
+                                `timestamp` AS time,
+                                MAX(CASE WHEN sensor_key = :v1 THEN value END) AS v1_value,
+                                MAX(CASE WHEN sensor_key = :v2 THEN value END) AS v2_value
+                         FROM sensor_readings
+                         WHERE session_id = :sid
+                             AND sensor_key IN (:v1, :v2)
+                         GROUP BY `timestamp`
+                         ORDER BY `timestamp` DESC"
+                );
         $stmt->execute([
             ':sid' => $sessionId,
             ':v1'  => $v1,
