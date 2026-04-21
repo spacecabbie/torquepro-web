@@ -1,0 +1,14 @@
+# Credentials — never commit
+creds.php
+includes/config.php
+
+# Runtime logs
+logs/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
