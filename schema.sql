@@ -28,7 +28,7 @@ CREATE TABLE sensor_categories (
   display_name VARCHAR(64) NOT NULL COMMENT 'Human-readable name',
   description TEXT DEFAULT NULL,
   icon VARCHAR(32) DEFAULT NULL COMMENT 'Optional icon/emoji identifier',
-  sort_order TINYINT UNSIGNED DEFAULT 100,
+  sort_order SMALLINT UNSIGNED DEFAULT 100,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_category_key (category_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -187,7 +187,7 @@ CREATE TABLE gps_points (
 
 -- Raw upload requests with date-based partitioning for easy archival
 CREATE TABLE upload_requests_raw (
-  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  id BIGINT UNSIGNED AUTO_INCREMENT,
   ts DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Server receipt time',
   upload_date DATE NOT NULL COMMENT 'Date for partitioning/archival (auto-set from ts)',
   ip VARCHAR(45) NOT NULL COMMENT 'Client IP address',
@@ -197,7 +197,7 @@ CREATE TABLE upload_requests_raw (
   result ENUM('ok', 'skipped', 'error') NOT NULL DEFAULT 'ok',
   error_msg TEXT DEFAULT NULL COMMENT 'Error message if result=error',
   processing_time_ms SMALLINT UNSIGNED DEFAULT NULL COMMENT 'Server processing time',
-  INDEX idx_upload_date (upload_date),
+  PRIMARY KEY (id, upload_date),
   INDEX idx_session (session_id),
   INDEX idx_ts (ts),
   INDEX idx_device (device_id),

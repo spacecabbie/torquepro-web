@@ -2,159 +2,223 @@
 declare(strict_types=1);
 
 /**
- * upload_data.php — Torque Pro upload endpoint.
+ * upload_data.php — Torque Pro upload endpoint (normalized schema).
  *
  * Receives sensor data from the Torque Pro Android app via HTTP GET,
- * validates and persists it to the raw_logs table, and responds with "OK!".
- * Sensor names arrive as flat keys (userShortName{suffix} / userFullName{suffix})
- * and are stored as MariaDB column COMMENTs.
+ * validates and persists it to the normalized schema (sessions, sensors, sensor_readings, gps_points).
+ * 
+ * New schema design:
+ * - sensors: Master registry of all k* sensors with metadata
+ * - sessions: One row per session_id
+ * - sensor_readings: Narrow time-series table (session_id, timestamp, sensor_key, value)
+ * - gps_points: GPS latitude/longitude track points
+ * - upload_requests_raw: Raw audit log with partitioning for archival
+ * - upload_requests_processed: Summary of processed uploads
  *
  * Auth: Torque-ID based (Auth::checkApp).
- * Audit: AuditLogger stores every request in upload_requests table.
- * SQL safety: SqlHelper::isValidColumnName() + quoteIdentifier().
+ * Audit: All uploads logged to upload_requests_raw + upload_requests_processed.
+ * SQL safety: Prepared statements for all queries.
  *
- * Origin: upload_data.php (updated for OOP migration — Step 4)
+ * Origin: upload_data.php (rewritten for normalized schema)
  */
 
 require_once __DIR__ . '/includes/config.php';
 require_once __DIR__ . '/includes/Auth/Auth.php';
 require_once __DIR__ . '/includes/Database/Connection.php';
-require_once __DIR__ . '/includes/Helpers/SqlHelper.php';
-require_once __DIR__ . '/includes/Logging/AuditLogger.php';
 
 use TorqueLogs\Auth\Auth;
 use TorqueLogs\Database\Connection;
-use TorqueLogs\Helpers\SqlHelper;
-use TorqueLogs\Logging\AuditLogger;
 
 // ── Auth guard (Torque-ID) ─────────────────────────────────────────────────
 Auth::checkApp();
 
 $pdo = Connection::get();
-
-// ── Capture raw query string ───────────────────────────────────────────────
-$rawQueryString = $_SERVER['QUERY_STRING'] ?? '';
-
-// ============================================================
-// ============================================================
-// AuditLogger::record() is provided by includes/Logging/AuditLogger.php
-// (origin: upload_data.php → AuditLogger::record())
-// ============================================================
+$pdo->beginTransaction();
 
 try {
-// Extract sensor name hints that Torque sends as flat GET keys:
-//   userShortName222408=Name  →  column k222408 gets short name
-//   userFullName222408=Name   →  column k222408 gets full name (lower priority)
-// Short names take priority over full names; both are stored as column COMMENTs.
-$sensor_names = [];
-foreach ($_GET as $rawKey => $name) {
-    if (!is_string($name) || $name === '') {
-        continue;
-    }
-    if (preg_match('/^userShortName(.+)$/', $rawKey, $m)) {
-        $col = 'k' . $m[1];
-        $sensor_names[$col] = $name;   // short name wins — overwrite any full name
-    } elseif (preg_match('/^userFullName(.+)$/', $rawKey, $m)) {
-        $col = 'k' . $m[1];
-        if (!isset($sensor_names[$col])) {
-            $sensor_names[$col] = $name;   // only use full name if no short name seen yet
+    // ── Capture raw request metadata ───────────────────────────────────────
+    $rawQueryString = $_SERVER['QUERY_STRING'] ?? '';
+    $clientIp       = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $deviceId       = md5($_GET['id'] ?? '');
+    $sessionId      = $_GET['session'] ?? null;
+    $eml            = $_GET['eml'] ?? null;
+    $timestamp      = isset($_GET['time']) ? (int)$_GET['time'] : null;
+    $uploadDate     = date('Y-m-d');
+    
+    // ── Insert raw audit log (partitioned for archival) ────────────────────
+    $stmtRaw = $pdo->prepare("
+        INSERT INTO upload_requests_raw 
+        (upload_date, ip, device_id, session_id, raw_query_string, result)
+        VALUES (CURDATE(), :ip, :device_id, :session_id, :raw_query_string, 'ok')
+    ");
+    $stmtRaw->execute([
+        ':ip'               => $clientIp,
+        ':device_id'        => $deviceId,
+        ':session_id'       => $sessionId,
+        ':raw_query_string' => $rawQueryString
+    ]);
+    $rawUploadId = (int)$pdo->lastInsertId();
+    
+    // ── Extract sensor names from flat keys ────────────────────────────────
+    // Torque sends: userShortName222408=Name, userFullName222408=Description
+    // We map these to sensor_key: k222408
+    $sensorNames = [];
+    $sensorDescriptions = [];
+    
+    foreach ($_GET as $rawKey => $value) {
+        if (!is_string($value) || $value === '') {
+            continue;
+        }
+        if (preg_match('/^userShortName(.+)$/', $rawKey, $m)) {
+            $sensorKey = 'k' . $m[1];
+            $sensorNames[$sensorKey] = $value;
+        } elseif (preg_match('/^userFullName(.+)$/', $rawKey, $m)) {
+            $sensorKey = 'k' . $m[1];
+            $sensorDescriptions[$sensorKey] = $value;
         }
     }
-}
-
-// Fetch the existing columns from the table once.
-$dbfields = [];
-$stmt = $pdo->query("SHOW COLUMNS FROM `" . DB_TABLE . "`");
-foreach ($stmt->fetchAll() as $row) {
-    $dbfields[] = $row['Field'];
-}
-
-// Iterate over all the k* _GET arguments and check that a column exists.
-if (count($_GET) > 0) {
-    $keys        = [];   // validated, backtick-quoted column names for SQL
-    $params      = [];   // PDO named placeholder => value
-    $new_columns = 0;    // count of ALTER TABLE ADD calls this request
-    $sensor_map  = [];   // k* key => raw value for audit log
-
+    
+    // ── UPSERT session ──────────────────────────────────────────────────────
+    if ($sessionId !== null && $eml !== null) {
+        $stmtSession = $pdo->prepare("
+            INSERT INTO sessions (session_id, device_id, start_time, last_update, eml)
+            VALUES (:session_id, :device_id, FROM_UNIXTIME(:ts / 1000), FROM_UNIXTIME(:ts / 1000), :eml)
+            ON DUPLICATE KEY UPDATE
+                last_update = FROM_UNIXTIME(:ts / 1000),
+                upload_count = upload_count + 1
+        ");
+        $stmtSession->execute([
+            ':session_id' => $sessionId,
+            ':device_id'  => $deviceId,
+            ':ts'         => $timestamp ?? time() * 1000,
+            ':eml'        => $eml
+        ]);
+    }
+    
+    // ── UPSERT sensors + Insert sensor readings ────────────────────────────
+    $sensorCount = 0;
+    $newSensorCount = 0;
+    $gpsLat = null;
+    $gpsLon = null;
+    
     foreach ($_GET as $key => $value) {
-        $submitval = false;
-
-        // Keep columns starting with k
-        if (preg_match('/^k/', $key)) {
-            $submitval = true;
-        } elseif (in_array($key, ['v', 'eml', 'time', 'id', 'session'], true)) {
-            $submitval = true;
-        // Skip userUnit*, defaultUnit*, profile* (but keep profileName*)
-        } elseif (
-            preg_match('/^userUnit/', $key) ||
-            preg_match('/^defaultUnit/', $key) ||
-            (preg_match('/^profile/', $key) && !preg_match('/^profileName/', $key))
-        ) {
-            $submitval = false;
-        }
-
-        if (!$submitval) {
+        // Only process k* sensor keys
+        if (!preg_match('/^k[a-fA-F0-9]+$/', $key)) {
             continue;
         }
-
-        // Reject any key that is not a safe SQL identifier.
-        if (!SqlHelper::isValidColumnName($key)) {
-            continue;
+        
+        // Special handling for GPS coordinates
+        if ($key === 'kff1005') {
+            $gpsLat = (float)$value;
+        } elseif ($key === 'kff1006') {
+            $gpsLon = (float)$value;
         }
-
-        // If the column doesn't exist yet, add it safely (identifier is quoted).
-        if (!in_array($key, $dbfields, true)) {
-            $quotedKey = SqlHelper::quoteIdentifier($key);
-            $comment   = isset($sensor_names[$key])
-                ? ' COMMENT ' . $pdo->quote($sensor_names[$key])
-                : '';
-            $pdo->exec("ALTER TABLE `" . DB_TABLE . "` ADD {$quotedKey} VARCHAR(255) NOT NULL DEFAULT '0'{$comment}");
-            $dbfields[] = $key;
-            $new_columns++;
-        } elseif (isset($sensor_names[$key])) {
-            // Column exists but may have no comment yet — update it.
-            $quotedKey = SqlHelper::quoteIdentifier($key);
-            $comment   = $pdo->quote($sensor_names[$key]);
-            // Only update if INFORMATION_SCHEMA shows comment is currently empty.
-            $chk = $pdo->prepare(
-                "SELECT COLUMN_COMMENT FROM INFORMATION_SCHEMA.COLUMNS
-                 WHERE TABLE_SCHEMA=:s AND TABLE_NAME=:t AND COLUMN_NAME=:c"
-            );
-            $chk->execute([':s' => DB_NAME, ':t' => DB_TABLE, ':c' => $key]);
-            $existing_comment = (string)($chk->fetchColumn() ?? '');
-            if ($existing_comment === '') {
-                $pdo->exec("ALTER TABLE `" . DB_TABLE . "` MODIFY {$quotedKey} VARCHAR(255) NOT NULL DEFAULT '0' COMMENT {$comment}");
+        
+        $sensorCount++;
+        
+        // Check if sensor exists
+        $stmtCheck = $pdo->prepare("SELECT id FROM sensors WHERE sensor_key = :key");
+        $stmtCheck->execute([':key' => $key]);
+        $sensorId = $stmtCheck->fetchColumn();
+        
+        // If sensor doesn't exist, create it
+        if ($sensorId === false) {
+            $shortName = $sensorNames[$key] ?? $key;
+            $fullName = $sensorDescriptions[$key] ?? null;
+            
+            $stmtInsertSensor = $pdo->prepare("
+                INSERT INTO sensors (sensor_key, short_name, full_name, category_id, unit_id)
+                VALUES (:key, :short_name, :full_name, 10, 1)
+            ");
+            $stmtInsertSensor->execute([
+                ':key'        => $key,
+                ':short_name' => $shortName,
+                ':full_name'  => $fullName
+            ]);
+            $sensorId = (int)$pdo->lastInsertId();
+            $newSensorCount++;
+        } else {
+            // Update sensor name if provided and different
+            if (isset($sensorNames[$key])) {
+                $stmtUpdate = $pdo->prepare("
+                    UPDATE sensors 
+                    SET short_name = :name, last_seen = CURRENT_TIMESTAMP
+                    WHERE sensor_key = :key AND short_name != :name
+                ");
+                $stmtUpdate->execute([
+                    ':key'  => $key,
+                    ':name' => $sensorNames[$key]
+                ]);
             }
         }
-
-        $keys[]               = SqlHelper::quoteIdentifier($key);
-        $params[':p_' . $key] = $value;
-        // Collect k* sensors for the audit log
-        if (preg_match('/^k/', $key)) {
-            $sensor_map[$key] = $value;
+        
+        // Insert sensor reading
+        if ($sessionId !== null && $timestamp !== null) {
+            $stmtReading = $pdo->prepare("
+                INSERT INTO sensor_readings (session_id, ts, sensor_key, value)
+                VALUES (:session_id, FROM_UNIXTIME(:ts / 1000), :sensor_key, :value)
+            ");
+            $stmtReading->execute([
+                ':session_id' => $sessionId,
+                ':ts'         => $timestamp,
+                ':sensor_key' => $key,
+                ':value'      => (string)$value
+            ]);
         }
     }
-
-    if (count($keys) > 0 && count($keys) === count($params)) {
-        // Build placeholders that match the :p_<key> names above.
-        $placeholders = implode(', ', array_keys($params));
-        $columns      = implode(', ', $keys);
-        $sql          = "INSERT IGNORE INTO `" . DB_TABLE . "` ({$columns}) VALUES ({$placeholders})";
-        $stmt         = $pdo->prepare($sql);
-        $stmt->execute($params);
-        $sensor_count = count($params);
-        AuditLogger::record($pdo, $_GET, 'ok', $sensor_count, $new_columns, $sensor_map, null, $rawQueryString);
-    } else {
-        AuditLogger::record($pdo, $_GET, 'skipped', 0, 0, [], 'No valid sensor keys found in request', $rawQueryString);
+    
+    // ── Insert GPS point if coordinates are present ────────────────────────
+    if ($gpsLat !== null && $gpsLon !== null && $sessionId !== null && $timestamp !== null) {
+        $stmtGps = $pdo->prepare("
+            INSERT INTO gps_points (session_id, ts, latitude, longitude)
+            VALUES (:session_id, FROM_UNIXTIME(:ts / 1000), :lat, :lon)
+        ");
+        $stmtGps->execute([
+            ':session_id' => $sessionId,
+            ':ts'         => $timestamp,
+            ':lat'        => $gpsLat,
+            ':lon'        => $gpsLon
+        ]);
     }
-} else {
-    AuditLogger::record($pdo, $_GET, 'skipped', 0, 0, [], 'Empty GET request', $rawQueryString);
-}
-
+    
+    // ── Insert processed upload summary ─────────────────────────────────────
+    $stmtProcessed = $pdo->prepare("
+        INSERT INTO upload_requests_processed 
+        (raw_upload_id, session_id, data_timestamp, sensor_count, new_sensors)
+        VALUES (:raw_upload_id, :session_id, :data_timestamp, :sensor_count, :new_sensors)
+    ");
+    $stmtProcessed->execute([
+        ':raw_upload_id'   => $rawUploadId,
+        ':session_id'      => $sessionId ?? '',
+        ':data_timestamp'  => $timestamp,
+        ':sensor_count'    => $sensorCount,
+        ':new_sensors'     => $newSensorCount
+    ]);
+    
+    $pdo->commit();
+    
 } catch (Throwable $e) {
-    AuditLogger::record($pdo, $_GET, 'error', 0, 0, [], $e->getMessage(), $rawQueryString);
-    // Still return OK so Torque doesn't retry endlessly; error is in the log.
+    $pdo->rollBack();
+    
+    // Log error to raw audit log
+    try {
+        $stmtError = $pdo->prepare("
+            UPDATE upload_requests_raw 
+            SET result = 'error', error_msg = :error 
+            WHERE id = :id
+        ");
+        $stmtError->execute([
+            ':id'    => $rawUploadId ?? 0,
+            ':error' => $e->getMessage()
+        ]);
+    } catch (Throwable $logError) {
+        // If logging fails, write to PHP error log
+        error_log("Torque upload error logging failed: " . $logError->getMessage());
+    }
+    
+    // Log to PHP error log for debugging
+    error_log("Torque upload error: " . $e->getMessage());
 }
 
-// Return the response required by Torque.
+// Return the response required by Torque (always return OK to prevent endless retries)
 echo 'OK!';
