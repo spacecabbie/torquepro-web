@@ -23,7 +23,14 @@ use TorqueLogs\Database\Connection;
 // AJAX data feed  (origin: live_log_data.php)
 // ============================================================
 if (isset($_GET['data'])) {
-    Auth::checkBrowser(); // exits with 401 JSON on failure
+    // AJAX route — return JSON 401 instead of redirecting to login page.
+    Auth::startSession();
+    if (!Auth::isLoggedIn()) {
+        http_response_code(401);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['error' => 'Unauthorized']);
+        exit;
+    }
 
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');

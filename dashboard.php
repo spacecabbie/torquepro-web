@@ -41,95 +41,120 @@ Auth::checkBrowser();
 
 $pdo = Connection::get();
 
-// ── Config flags ────────────────────────────────────────────────────────────
-$show_session_length  = defined('SHOW_SESSION_LENGTH')  ? SHOW_SESSION_LENGTH  : false;
-$hide_empty_variables = defined('HIDE_EMPTY_VARIABLES') ? HIDE_EMPTY_VARIABLES : false;
-$timezone             = defined('TIMEZONE')             ? TIMEZONE             : 'UTC';
+// ── Timezone from session ──────────────────────────────────────────────────
+$timezone = $_SESSION['time'] ?? '';
 
-// ── Session actions (delete / merge) ────────────────────────────────────────
-$manager = new SessionManager($pdo);
-
-// Load all sessions first so we have the full SID list for merge validation.
+// ── Session list ───────────────────────────────────────────────────────────
 $sessionRepo = new SessionRepository($pdo);
 $sessionData = $sessionRepo->findAll();
 $sids        = $sessionData['sids'];
 $seshdates   = $sessionData['dates'];
 $seshsizes   = $sessionData['sizes'];
 
-if (isset($_POST['action'])) {
-    if ($_POST['action'] === 'delete' && isset($_POST['id'])) {
-        $sid = preg_replace('/\D/', '', $_POST['id']);
-        if ($sid !== '') {
-            $manager->delete($sid);
-        }
-    } elseif ($_POST['action'] === 'merge' && isset($_POST['into'], $_POST['with'])) {
-        $into = preg_replace('/\D/', '', $_POST['into']);
-        $with = preg_replace('/\D/', '', $_POST['with']);
-        if ($into !== '' && $with !== '') {
-            $manager->merge($into, $with, $sids);
-        }
-    }
-    // Reload after mutation.
+$_SESSION['recent_session_id'] = !empty($sids) ? strval(max($sids)) : '';
+
+// ── Resolve requested session ID ───────────────────────────────────────────
+$session_id = '';
+if (isset($_POST['id'])) {
+    $session_id = preg_replace('/\D/', '', $_POST['id']) ?? '';
+} elseif (isset($_GET['id'])) {
+    $session_id = preg_replace('/\D/', '', $_GET['id']) ?? '';
+}
+$hasSession = $session_id !== '';
+
+// ── Delete action  (origin: del_session.php) ───────────────────────────────
+// Forms pass the session ID in the query string, not the POST body.
+$manager  = new SessionManager($pdo);
+$deleteId = '';
+if (isset($_GET['deletesession'])) {
+    $deleteId = preg_replace('/\D/', '', $_GET['deletesession']) ?? '';
+}
+if ($deleteId !== '') {
+    $manager->delete($deleteId);
     $sessionData = $sessionRepo->findAll();
     $sids        = $sessionData['sids'];
     $seshdates   = $sessionData['dates'];
     $seshsizes   = $sessionData['sizes'];
+    $session_id  = '';
+    $hasSession  = false;
 }
 
-// ── Active session ───────────────────────────────────────────────────────────
-if (isset($_POST['id'])) {
-    $session_id = preg_replace('/\D/', '', $_POST['id']);
-} elseif (isset($_GET['id'])) {
-    $session_id = preg_replace('/\D/', '', $_GET['id']);
+// ── Merge action  (origin: merge_sessions.php) ─────────────────────────────
+$mergeId     = '';
+$mergeWithId = '';
+if (isset($_GET['mergesession'])) {
+    $mergeId = preg_replace('/\D/', '', $_GET['mergesession']) ?? '';
 }
-
-$hasSession  = isset($session_id) && $session_id !== '';
-$imapdata    = GpsRepository::DEFAULT_MAP_DATA;
-$geolocs     = [];
-
-// ── Column metadata ──────────────────────────────────────────────────────────
-$colRepo      = new ColumnRepository($pdo);
-$coldata      = $colRepo->findPlottable();
-
-// ── GPS track ────────────────────────────────────────────────────────────────
-if ($hasSession) {
-    $idx             = array_search($session_id, $sids, true);
-    $session_id_next = ($idx !== false && $idx > 0) ? $sids[$idx - 1] : false;
-
-    $gpsRepo  = new GpsRepository($pdo);
-    $geolocs  = $gpsRepo->findTrack($session_id);
-    if (!empty($geolocs)) {
-        $pts      = array_map(fn($d) => '[' . $d['lat'] . ',' . $d['lon'] . ']', $geolocs);
-        $imapdata = '[' . implode(',', $pts) . ']';
+if (isset($_GET['mergesessionwith'])) {
+    $mergeWithId = preg_replace('/\D/', '', $_GET['mergesessionwith']) ?? '';
+}
+if ($mergeId !== '' && $mergeWithId !== '') {
+    $mergedId = $manager->merge($mergeId, $mergeWithId, $sids);
+    if ($mergedId !== null) {
+        $sessionData = $sessionRepo->findAll();
+        $sids        = $sessionData['sids'];
+        $seshdates   = $sessionData['dates'];
+        $seshsizes   = $sessionData['sizes'];
+        $session_id  = $mergedId;
+        $hasSession  = true;
     }
 }
 
-// ── Plot data (v1 / v2) ──────────────────────────────────────────────────────
-$v1 = $_GET['v1'] ?? '';
-$v2 = $_GET['v2'] ?? '';
+// ── Column metadata ────────────────────────────────────────────────────────
+$colRepo      = new ColumnRepository($pdo);
+$coldata      = $colRepo->findPlottable();
+$coldataempty = $hasSession ? $colRepo->findEmpty($session_id, $coldata) : [];
 
-$plotRepo   = new PlotRepository($pdo);
-$plotResult = $hasSession
-    ? $plotRepo->load($session_id, $sids, $coldata, $v1, $v2)
+// ── GPS track ──────────────────────────────────────────────────────────────
+$gpsRepo = new GpsRepository($pdo);
+$gpsData = $hasSession
+    ? $gpsRepo->findTrack($session_id)
+    : ['points' => [], 'mapdata' => GpsRepository::DEFAULT_MAP_DATA];
+
+$geolocs  = $gpsData['points'];
+$imapdata = $gpsData['mapdata'];
+
+// ── Chart data + statistics ────────────────────────────────────────────────
+$plotRepo = new PlotRepository($pdo);
+$plotData = $hasSession
+    ? $plotRepo->load(
+        $session_id,
+        $sids,
+        $coldata,
+        $_GET['s1'] ?? null,
+        $_GET['s2'] ?? null,
+        __DIR__ . '/data/torque_keys.csv'
+    )
     : null;
 
-$v1_label  = $plotResult['v1_label']  ?? '';
-$v2_label  = $plotResult['v2_label']  ?? '';
-$d1        = $plotResult['d1']        ?? [];
-$d2        = $plotResult['d2']        ?? [];
-$sparkdata1 = $plotResult['sparkdata1'] ?? [];
-$sparkdata2 = $plotResult['sparkdata2'] ?? [];
-$avg1      = $plotResult['avg1']      ?? null;
-$avg2      = $plotResult['avg2']      ?? null;
+// Flatten plot variables for the view (preserving original variable names).
+$v1          = $plotData['v1']        ?? 'kd';
+$v2          = $plotData['v2']        ?? 'kf';
+$v1_label    = $plotData['v1Label']   ?? '"Variable 1"';
+$v2_label    = $plotData['v2Label']   ?? '"Variable 2"';
+$d1          = $plotData['d1']        ?? [];
+$d2          = $plotData['d2']        ?? [];
+$sparkdata1  = $plotData['sparkdata1'] ?? '';
+$sparkdata2  = $plotData['sparkdata2'] ?? '';
+$avg1        = $plotData['avg1']       ?? 0;
+$avg2        = $plotData['avg2']       ?? 0;
+$min1        = $plotData['min1']       ?? 0;
+$min2        = $plotData['min2']       ?? 0;
+$max1        = $plotData['max1']       ?? 0;
+$max2        = $plotData['max2']       ?? 0;
+$pcnt25data1 = $plotData['pcnt25_1']  ?? 0;
+$pcnt25data2 = $plotData['pcnt25_2']  ?? 0;
+$pcnt75data1 = $plotData['pcnt75_1']  ?? 0;
+$pcnt75data2 = $plotData['pcnt75_2']  ?? 0;
 
-// ── Empty column filter ──────────────────────────────────────────────────────
-$coldataempty = [];
-if ($hasSession && $hide_empty_variables) {
-    $coldataempty = $colRepo->findEmpty($session_id, $coldata);
+// ── Merge helper: find adjacent (younger) session ──────────────────────────
+$session_id_next = false;
+if ($hasSession) {
+    $idx = array_search($session_id, $sids, true);
+    $session_id_next = ($idx !== false && $idx > 0) ? $sids[$idx - 1] : false;
 }
 
-$_SESSION['recent_session_id'] = !empty($sids) ? strval(max($sids)) : '';
-
+// ── Session label for the page header ──────────────────────────────────────
 $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
     ? $seshdates[$session_id]
     : 'No session selected';
@@ -268,7 +293,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
                 <option value="<?php echo $dateid; ?>"
                     <?php if ($dateid == ($session_id ?? '')) echo 'selected'; ?>>
                     <?php echo htmlspecialchars($datestr);
-                          if ($show_session_length) echo $seshsizes[$dateid]; ?>
+                          if (SHOW_SESSION_LENGTH) echo $seshsizes[$dateid]; ?>
                 </option>
             <?php endforeach; ?>
         </select>
@@ -312,7 +337,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
                 $empty = ($coldataempty[$xcol['colname']] ?? 0) == 1; ?>
                 <option value="<?php echo $xcol['colname']; ?>"
                     <?php if (($xcol['colname'] === ($v1 ?? 'kd'))) echo 'selected'; ?>
-                    <?php if ($hide_empty_variables && $empty) echo 'hidden'; ?>>
+                    <?php if (HIDE_EMPTY_VARIABLES && $empty) echo 'hidden'; ?>>
                     <?php echo htmlspecialchars($xcol['colcomment'] ?: $xcol['colname']); ?>
                     <?php if ($empty) echo ' [empty]'; ?>
                 </option>
@@ -323,7 +348,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
                 $empty = ($coldataempty[$xcol['colname']] ?? 0) == 1; ?>
                 <option value="<?php echo $xcol['colname']; ?>"
                     <?php if (($xcol['colname'] === ($v2 ?? 'kf'))) echo 'selected'; ?>
-                    <?php if ($hide_empty_variables && $empty) echo 'hidden'; ?>>
+                    <?php if (HIDE_EMPTY_VARIABLES && $empty) echo 'hidden'; ?>>
                     <?php echo htmlspecialchars($xcol['colcomment'] ?: $xcol['colname']); ?>
                     <?php if ($empty) echo ' [empty]'; ?>
                 </option>
@@ -357,7 +382,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
     <!-- ── Stat cards ── -->
     <div class="row g-3 mb-3">
 
-        <?php if ($hasSession && isset($avg1)): ?>
+        <?php if ($hasSession && $plotData !== null): ?>
         <div class="col-6 col-lg-3">
             <div class="stat-card bg-speed">
                 <div class="stat-label"><?php echo strip_tags(substr($v1_label, 1, -1)); ?></div>
@@ -423,7 +448,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
             <div class="card h-100">
                 <div class="card-header">Data Summary</div>
                 <div class="card-body">
-                <?php if ($hasSession && isset($avg1)): ?>
+                <?php if ($hasSession && $plotData !== null): ?>
                     <div class="table-responsive">
                         <table class="table table-sm table-hover align-middle mb-0">
                             <thead class="table-light">

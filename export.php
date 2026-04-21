@@ -35,7 +35,7 @@ $stmt = $pdo->prepare(
     'SELECT * FROM `' . DB_TABLE . '` WHERE session = :sid ORDER BY time DESC'
 );
 $stmt->execute([':sid' => $session_id]);
-$rows = $stmt->fetchAll();
+$rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 if ($filetype === 'csv') {
     $output = '';
@@ -43,13 +43,13 @@ if ($filetype === 'csv') {
     if (!empty($rows)) {
         // Column headings from the first row's keys.
         foreach (array_keys($rows[0]) as $heading) {
-            $output .= '"' . addslashes((string) $heading) . '",';
+            $output .= '"' . str_replace('"', '""', (string) $heading) . '",';
         }
         $output .= "\n";
 
         foreach ($rows as $row) {
             foreach ($row as $cell) {
-                $output .= '"' . addslashes((string) $cell) . '",';
+                $output .= '"' . str_replace('"', '""', (string) $cell) . '",';
             }
             $output .= "\n";
         }
