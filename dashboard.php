@@ -239,7 +239,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
         .card-body { padding: 1rem; }
 
         /* ── Stat cards ── */
-        .stat-card { border-radius: 10px; padding: .9rem 1rem; color: #fff; }
+        .stat-card { border-radius: 10px; padding: .9rem 1rem; color: #fff; height: 100%; }
         .stat-card .stat-label { font-size: .72rem; opacity: .85; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; }
         .stat-card .stat-value { font-size: 1.5rem; font-weight: 700; line-height: 1.2; }
         .stat-card .stat-sub   { font-size: .78rem; opacity: .8; }
