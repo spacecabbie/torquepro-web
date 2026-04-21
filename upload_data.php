@@ -30,7 +30,7 @@ Auth::checkApp();
 
 // ── Logger ─────────────────────────────────────────────────────────────────
 $logger = new FileLogger(
-    defined('UPLOAD_LOG_DIR') ? UPLOAD_LOG_DIR : __DIR__ . '/logs',
+    UPLOAD_LOG_DIR,
     'torque_upload'
 );
 
@@ -165,7 +165,7 @@ if (count($_GET) > 0) {
                 "SELECT COLUMN_COMMENT FROM INFORMATION_SCHEMA.COLUMNS
                  WHERE TABLE_SCHEMA=:s AND TABLE_NAME=:t AND COLUMN_NAME=:c"
             );
-            $chk->execute([':s' => $db_name, ':t' => $db_table, ':c' => $key]);
+            $chk->execute([':s' => DB_NAME, ':t' => DB_TABLE, ':c' => $key]);
             $existing_comment = (string)($chk->fetchColumn() ?? '');
             if ($existing_comment === '') {
                 $pdo->exec("ALTER TABLE `" . DB_TABLE . "` MODIFY {$quotedKey} VARCHAR(255) NOT NULL DEFAULT '0' COMMENT '{$comment}'");
