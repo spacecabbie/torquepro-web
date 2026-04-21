@@ -132,6 +132,19 @@ try {
         INSERT INTO sensor_readings (session_id, timestamp, sensor_key, value)
         VALUES (:session_id, :timestamp, :sensor_key, :value)
     ");
+    // Sensor INSERT — prepared once; :is_gps bound per-execution.
+    $stmtInsertSensor = $pdo->prepare("
+        INSERT INTO sensors (sensor_key, short_name, full_name, category_id, unit_id, is_gps)
+        VALUES (:key, :short_name, :full_name, 10, NULL, :is_gps)
+    ");
+    // Sensor name UPDATE — :name_new and :name_check are the same value but
+    // must be distinct placeholders (PDO native mode forbids reusing a named
+    // placeholder within one statement).
+    $stmtUpdateSensor = $pdo->prepare("
+        UPDATE sensors
+        SET short_name = :name_new, last_updated = CURRENT_TIMESTAMP
+        WHERE sensor_key = :key AND short_name != :name_check
+    ");
 
     foreach ($_GET as $key => $value) {
         // Only process k* sensor keys (alphanumeric suffix: kd, kff1006, k222408, …)
@@ -163,10 +176,6 @@ try {
         $sensorKeyExists = $stmtCheck->fetchColumn();
 
         if ($sensorKeyExists === false) {
-            $stmtInsertSensor = $pdo->prepare("
-                INSERT INTO sensors (sensor_key, short_name, full_name, category_id, unit_id, is_gps)
-                VALUES (:key, :short_name, :full_name, 10, NULL, :is_gps)
-            ");
             $stmtInsertSensor->execute([
                 ':key'        => $key,
                 ':short_name' => $sensorNames[$key] ?? $key,
@@ -176,14 +185,10 @@ try {
             $newSensorCount++;
         } elseif (isset($sensorNames[$key])) {
             // Update the short name if Torque supplied one and it has changed.
-            $stmtUpdate = $pdo->prepare("
-                UPDATE sensors
-                SET short_name = :name, last_updated = CURRENT_TIMESTAMP
-                WHERE sensor_key = :key AND short_name != :name
-            ");
-            $stmtUpdate->execute([
-                ':key'  => $key,
-                ':name' => $sensorNames[$key],
+            $stmtUpdateSensor->execute([
+                ':key'         => $key,
+                ':name_new'    => $sensorNames[$key],
+                ':name_check'  => $sensorNames[$key],
             ]);
         }
 
