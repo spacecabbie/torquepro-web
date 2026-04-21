@@ -1,8 +1,23 @@
 <?php
 declare(strict_types=1);
 
-require("./creds.php");
-require_once("./db.php");
+/**
+ * export.php — CSV / JSON export endpoint.
+ *
+ * Requires browser auth. Exports all sensor rows for a given session as
+ * either a CSV or JSON file download.
+ *
+ * Origin: export.php (updated for OOP migration — Step 4)
+ */
+
+require_once __DIR__ . '/includes/config.php';
+require_once __DIR__ . '/includes/Auth/Auth.php';
+require_once __DIR__ . '/includes/Database/Connection.php';
+
+use TorqueLogs\Auth\Auth;
+use TorqueLogs\Database\Connection;
+
+Auth::checkBrowser();
 
 if (!isset($_GET['sid'])) {
     exit;
@@ -15,9 +30,9 @@ if ($session_id === '') {
 
 $filetype = $_GET['filetype'] ?? '';
 
-$pdo  = get_pdo();
+$pdo  = Connection::get();
 $stmt = $pdo->prepare(
-    "SELECT * FROM `{$db_table}` WHERE session = :sid ORDER BY time DESC"
+    'SELECT * FROM `' . DB_TABLE . '` WHERE session = :sid ORDER BY time DESC'
 );
 $stmt->execute([':sid' => $session_id]);
 $rows = $stmt->fetchAll();

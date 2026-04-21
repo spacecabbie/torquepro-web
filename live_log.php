@@ -1,8 +1,90 @@
 <?php
 declare(strict_types=1);
-require_once('creds.php');
-require_once('auth_user.php');
-if (!$logged_in) { exit; }
+
+/**
+ * live_log.php — Live upload console + AJAX data feed.
+ *
+ * Browser view:   GET live_log.php          → full HTML console page.
+ * AJAX data feed: GET live_log.php?data=1   → JSON rows from upload_requests.
+ *
+ * Both routes require browser auth (session).
+ *
+ * Origin: live_log.php + live_log_data.php (merged — Step 4)
+ */
+
+require_once __DIR__ . '/includes/config.php';
+require_once __DIR__ . '/includes/Auth/Auth.php';
+require_once __DIR__ . '/includes/Database/Connection.php';
+
+use TorqueLogs\Auth\Auth;
+use TorqueLogs\Database\Connection;
+
+// ============================================================
+// AJAX data feed  (origin: live_log_data.php)
+// ============================================================
+if (isset($_GET['data'])) {
+    Auth::checkBrowser(); // exits with 401 JSON on failure
+
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+
+    $since_id = isset($_GET['since_id']) ? (int)$_GET['since_id'] : 0;
+
+    try {
+        $pdo  = Connection::get();
+        $stmt = $pdo->prepare(
+            'SELECT
+                id, ts, ip, torque_id, eml, app_version,
+                session, data_ts, sensor_count, sensor_data,
+                new_columns, profile_name, result, error_msg
+             FROM upload_requests
+             WHERE id > :since_id
+             ORDER BY id ASC
+             LIMIT 100'
+        );
+        $stmt->execute([':since_id' => $since_id]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        foreach ($rows as &$r) {
+            $r['id']           = (int)$r['id'];
+            $r['sensor_count'] = (int)$r['sensor_count'];
+            $r['new_columns']  = (int)$r['new_columns'];
+            $r['data_ts']      = $r['data_ts'] !== null ? (int)$r['data_ts'] : null;
+            $r['sensor_data']  = $r['sensor_data'] !== null
+                ? json_decode($r['sensor_data'], true)
+                : null;
+        }
+        unset($r);
+
+        $colNames = [];
+        $cnStmt   = $pdo->prepare(
+            'SELECT COLUMN_NAME, COLUMN_COMMENT
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME   = :tbl
+               AND COLUMN_NAME  LIKE \'k%\'
+               AND COLUMN_COMMENT <> \'\'' 
+        );
+        $cnStmt->execute([':tbl' => DB_TABLE]);
+        foreach ($cnStmt->fetchAll(PDO::FETCH_ASSOC) as $cn) {
+            $colNames[$cn['COLUMN_NAME']] = $cn['COLUMN_COMMENT'];
+        }
+
+        echo json_encode(
+            ['rows' => $rows, 'col_names' => $colNames, 'ts' => time()],
+            JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR
+        );
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode(['error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// ============================================================
+// Browser view  (origin: live_log.php)
+// ============================================================
+Auth::checkBrowser();
 ?><!DOCTYPE html>
 <html lang="en">
 <head>
@@ -315,7 +397,7 @@ function appendRows(rows){
 // ── Polling ──────────────────────────────────────────────────────────────
 function poll(){
   if(paused)return;
-  fetch('live_log_data.php?since_id='+sinceId,{credentials:'same-origin'})
+  fetch('live_log.php?data=1&since_id='+sinceId,{credentials:'same-origin'})
     .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
     .then(function(d){
       if(d.error) throw new Error(d.error);
@@ -360,7 +442,7 @@ logWrap.addEventListener('scroll',function(){
 });
 
 // ── Boot ─────────────────────────────────────────────────────────────────
-fetch('live_log_data.php?since_id=0',{credentials:'same-origin'})
+fetch('live_log.php?data=1&since_id=0',{credentials:'same-origin'})
   .then(function(r){ return r.json(); })
   .then(function(d){
     if(d.col_names) Object.assign(colNames,d.col_names);

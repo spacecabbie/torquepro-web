@@ -1,22 +1,82 @@
 <?php
 declare(strict_types=1);
 
-ini_set('memory_limit', '-1');
-require_once './creds.php';
-require_once './db.php';
-require_once './auth_user.php';
+/**
+ * dashboard.php — Main UI entry point.
+ *
+ * Bootstraps auth, loads data via repository classes, then renders the HTML view.
+ * All business logic lives in includes/; this file only wires dependencies together.
+ *
+ * Origin: dashboard.php (updated for OOP migration — Step 4)
+ */
 
-require_once './del_session.php';
-require_once './merge_sessions.php';
-require_once './get_sessions.php';
-require_once './get_columns.php';
-require_once './plot.php';
+require_once __DIR__ . '/includes/config.php';
+require_once __DIR__ . '/includes/Auth/Auth.php';
+require_once __DIR__ . '/includes/Database/Connection.php';
+require_once __DIR__ . '/includes/Data/SessionRepository.php';
+require_once __DIR__ . '/includes/Data/ColumnRepository.php';
+require_once __DIR__ . '/includes/Data/GpsRepository.php';
+require_once __DIR__ . '/includes/Data/PlotRepository.php';
+require_once __DIR__ . '/includes/Session/SessionManager.php';
 
-// Guard: $sids may be empty if no qualifying sessions exist yet.
-$_SESSION['recent_session_id'] = !empty($sids) ? strval(max($sids)) : '';
+use TorqueLogs\Auth\Auth;
+use TorqueLogs\Database\Connection;
+use TorqueLogs\Data\SessionRepository;
+use TorqueLogs\Data\ColumnRepository;
+use TorqueLogs\Data\GpsRepository;
+use TorqueLogs\Data\PlotRepository;
+use TorqueLogs\Session\SessionManager;
 
-$pdo = get_pdo();
+// ── Inline endpoint: set timezone preference ────────────────────────────────
+if (isset($_GET['settz'])) {
+    Auth::checkBrowser();
+    if (isset($_GET['time'])) {
+        $_SESSION['time'] = $_GET['time'];
+    }
+    exit;
+}
 
+// ── Auth guard ──────────────────────────────────────────────────────────────
+Auth::checkBrowser();
+
+$pdo = Connection::get();
+
+// ── Config flags ────────────────────────────────────────────────────────────
+$show_session_length  = defined('SHOW_SESSION_LENGTH')  ? SHOW_SESSION_LENGTH  : false;
+$hide_empty_variables = defined('HIDE_EMPTY_VARIABLES') ? HIDE_EMPTY_VARIABLES : false;
+$timezone             = defined('TIMEZONE')             ? TIMEZONE             : 'UTC';
+
+// ── Session actions (delete / merge) ────────────────────────────────────────
+$manager = new SessionManager($pdo);
+
+// Load all sessions first so we have the full SID list for merge validation.
+$sessionRepo = new SessionRepository($pdo);
+$sessionData = $sessionRepo->findAll();
+$sids        = $sessionData['sids'];
+$seshdates   = $sessionData['dates'];
+$seshsizes   = $sessionData['sizes'];
+
+if (isset($_POST['action'])) {
+    if ($_POST['action'] === 'delete' && isset($_POST['id'])) {
+        $sid = preg_replace('/\D/', '', $_POST['id']);
+        if ($sid !== '') {
+            $manager->delete($sid);
+        }
+    } elseif ($_POST['action'] === 'merge' && isset($_POST['into'], $_POST['with'])) {
+        $into = preg_replace('/\D/', '', $_POST['into']);
+        $with = preg_replace('/\D/', '', $_POST['with']);
+        if ($into !== '' && $with !== '') {
+            $manager->merge($into, $with, $sids);
+        }
+    }
+    // Reload after mutation.
+    $sessionData = $sessionRepo->findAll();
+    $sids        = $sessionData['sids'];
+    $seshdates   = $sessionData['dates'];
+    $seshsizes   = $sessionData['sizes'];
+}
+
+// ── Active session ───────────────────────────────────────────────────────────
 if (isset($_POST['id'])) {
     $session_id = preg_replace('/\D/', '', $_POST['id']);
 } elseif (isset($_GET['id'])) {
@@ -24,35 +84,51 @@ if (isset($_POST['id'])) {
 }
 
 $hasSession  = isset($session_id) && $session_id !== '';
-$imapdata    = '[[37.235, -115.8111]]';
+$imapdata    = GpsRepository::DEFAULT_MAP_DATA;
 $geolocs     = [];
 
-if ($hasSession) {
+// ── Column metadata ──────────────────────────────────────────────────────────
+$colRepo      = new ColumnRepository($pdo);
+$coldata      = $colRepo->findPlottable();
 
-    // For the merge function, find the next (younger) session.
+// ── GPS track ────────────────────────────────────────────────────────────────
+if ($hasSession) {
     $idx             = array_search($session_id, $sids, true);
     $session_id_next = ($idx !== false && $idx > 0) ? $sids[$idx - 1] : false;
 
-    // GPS track.
-    $sessionqry = $pdo->prepare(
-        "SELECT kff1006, kff1005
-         FROM `{$db_table}`
-         WHERE session = :sid
-         ORDER BY time DESC"
-    );
-    $sessionqry->execute([':sid' => $session_id]);
-
-    foreach ($sessionqry->fetchAll() as $geo) {
-        if ($geo['kff1006'] != 0 && $geo['kff1005'] != 0) {
-            $geolocs[] = ['lat' => $geo['kff1006'], 'lon' => $geo['kff1005']];
-        }
-    }
-
+    $gpsRepo  = new GpsRepository($pdo);
+    $geolocs  = $gpsRepo->findTrack($session_id);
     if (!empty($geolocs)) {
         $pts      = array_map(fn($d) => '[' . $d['lat'] . ',' . $d['lon'] . ']', $geolocs);
         $imapdata = '[' . implode(',', $pts) . ']';
     }
 }
+
+// ── Plot data (v1 / v2) ──────────────────────────────────────────────────────
+$v1 = $_GET['v1'] ?? '';
+$v2 = $_GET['v2'] ?? '';
+
+$plotRepo   = new PlotRepository($pdo);
+$plotResult = $hasSession
+    ? $plotRepo->load($session_id, $sids, $coldata, $v1, $v2)
+    : null;
+
+$v1_label  = $plotResult['v1_label']  ?? '';
+$v2_label  = $plotResult['v2_label']  ?? '';
+$d1        = $plotResult['d1']        ?? [];
+$d2        = $plotResult['d2']        ?? [];
+$sparkdata1 = $plotResult['sparkdata1'] ?? [];
+$sparkdata2 = $plotResult['sparkdata2'] ?? [];
+$avg1      = $plotResult['avg1']      ?? null;
+$avg2      = $plotResult['avg2']      ?? null;
+
+// ── Empty column filter ──────────────────────────────────────────────────────
+$coldataempty = [];
+if ($hasSession && $hide_empty_variables) {
+    $coldataempty = $colRepo->findEmpty($session_id, $coldata);
+}
+
+$_SESSION['recent_session_id'] = !empty($sids) ? strval(max($sids)) : '';
 
 $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
     ? $seshdates[$session_id]
@@ -451,7 +527,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
 $(function() {
     if ("<?php echo $timezone; ?>".length === 0) {
         var tz   = "GMT " + -(new Date().getTimezoneOffset() / 60);
-        var tzurl = location.href.split('?')[0].replace('dashboard', 'timezone');
+        var tzurl = location.pathname + '?settz=1';
         $.get(tzurl, {time: tz}, function() { location.reload(); });
     }
 });

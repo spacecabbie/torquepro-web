@@ -1,89 +1,57 @@
 <?php
 declare(strict_types=1);
 
-require_once('creds.php');
-require_once('db.php');
-require_once('auth_app.php');
-
-// ── Request logger ────────────────────────────────────────────────────────
-// Set to true to enable, false to disable without deleting the code.
-// Logs go to logs/torque_upload_YYYY-MM-DD.log  (one file per day, auto-rotated).
-// Each line is a JSON object for easy parsing.
-define('UPLOAD_LOG_ENABLED', true);
-define('UPLOAD_LOG_DIR', __DIR__ . '/logs');
-
-function log_torque_request(array $get, string $result, ?string $error = null): void
-{
-    if (!UPLOAD_LOG_ENABLED) {
-        return;
-    }
-
-    if (!is_dir(UPLOAD_LOG_DIR)) {
-        mkdir(UPLOAD_LOG_DIR, 0750, true);
-        // Deny direct web access to the logs folder.
-        file_put_contents(UPLOAD_LOG_DIR . '/.htaccess', "Deny from all\n");
-    }
-
-    $entry = [
-        'ts'      => date('Y-m-d H:i:s'),
-        'ip'      => $_SERVER['REMOTE_ADDR'] ?? 'unknown',
-        'result'  => $result,                   // 'ok' | 'error' | 'skipped'
-        'error'   => $error,
-        // Fixed Torque fields
-        'eml'     => $get['eml']     ?? null,
-        'id'      => $get['id']      ?? null,   // already hashed by Torque
-        'session' => $get['session'] ?? null,
-        'time'    => $get['time']    ?? null,
-        'v'       => $get['v']       ?? null,   // app version
-        // Sensor values: collect all k* top-level keys
-        'sensors' => (static function (array $g): array {
-            $out = [];
-            foreach ($g as $k => $v) {
-                if (preg_match('/^k/', $k) && is_string($v)) {
-                    $out[$k] = $v;
-                }
-            }
-            return $out;
-        })($get),
-        // Metadata arrays Torque sends about sensors
-        'userShortName' => $get['userShortName'] ?? [],
-        'userFullName'  => $get['userFullName']  ?? [],
-        'userUnit'      => $get['userUnit']      ?? [],
-        'defaultUnit'   => $get['defaultUnit']   ?? [],
-        'profileName'   => $get['profileName']   ?? null,
-        // Raw param count for quick anomaly detection
-        'param_count'   => count($get),
-    ];
-
-    $logfile = UPLOAD_LOG_DIR . '/torque_upload_' . date('Y-m-d') . '.log';
-    file_put_contents($logfile, json_encode($entry) . "\n", FILE_APPEND | LOCK_EX);
-}
-// ── End logger ────────────────────────────────────────────────────────────
-
 /**
- * Validate that a column name is safe to use as a SQL identifier.
- * Only letters, digits and underscores; must start with a letter or underscore;
- * max 64 chars (MariaDB identifier limit).
+ * upload_data.php — Torque Pro upload endpoint.
+ *
+ * Receives sensor data from the Torque Pro Android app via HTTP GET,
+ * validates and persists it to the raw_logs table, and responds with "OK!".
+ *
+ * Auth: Torque-ID based (Auth::checkApp).
+ * Logging: PSR-3 FileLogger (daily JSON log).
+ * SQL safety: SqlHelper::isValidColumnName() + quoteIdentifier().
+ *
+ * Origin: upload_data.php (updated for OOP migration — Step 4)
  */
-function is_valid_column_name(string $name): bool
-{
-    return (bool) preg_match('/^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/', $name);
-}
 
-/**
- * Backtick-quote a validated identifier for safe use in SQL.
- * Always call is_valid_column_name() before this.
- */
-function quote_identifier(string $name): string
-{
-    return '`' . str_replace('`', '``', $name) . '`';
-}
+require_once __DIR__ . '/includes/config.php';
+require_once __DIR__ . '/includes/Auth/Auth.php';
+require_once __DIR__ . '/includes/Database/Connection.php';
+require_once __DIR__ . '/includes/Helpers/SqlHelper.php';
+require_once __DIR__ . '/includes/Logging/FileLogger.php';
 
-$pdo = get_pdo();
+use TorqueLogs\Auth\Auth;
+use TorqueLogs\Database\Connection;
+use TorqueLogs\Helpers\SqlHelper;
+use TorqueLogs\Logging\FileLogger;
+
+// ── Auth guard (Torque-ID) ─────────────────────────────────────────────────
+Auth::checkApp();
+
+// ── Logger ─────────────────────────────────────────────────────────────────
+$logger = new FileLogger(
+    defined('UPLOAD_LOG_DIR') ? UPLOAD_LOG_DIR : __DIR__ . '/logs',
+    'torque_upload'
+);
+
+$pdo = Connection::get();
+
+// ============================================================
+// Audit logger  (origin: upload_data.php → audit_torque_request())
+// ============================================================
 
 /**
  * Insert a row into the upload_requests audit table.
  * Silently swallows any DB error so a logging failure never breaks the upload.
+ *
+ * @param  \PDO                $pdo
+ * @param  array<string,mixed> $get
+ * @param  string              $result       'ok' | 'error' | 'skipped'
+ * @param  int                 $sensor_count
+ * @param  int                 $new_columns
+ * @param  array<string,mixed> $sensor_map
+ * @param  string|null         $error
+ * @return void
  */
 function audit_torque_request(
     PDO $pdo,
@@ -141,7 +109,7 @@ foreach (['userShortName', 'userFullName'] as $nameKey) {
 
 // Fetch the existing columns from the table once.
 $dbfields = [];
-$stmt = $pdo->query("SHOW COLUMNS FROM `{$db_table}`");
+$stmt = $pdo->query("SHOW COLUMNS FROM `" . DB_TABLE . "`");
 foreach ($stmt->fetchAll() as $row) {
     $dbfields[] = $row['Field'];
 }
@@ -175,22 +143,22 @@ if (count($_GET) > 0) {
         }
 
         // Reject any key that is not a safe SQL identifier.
-        if (!is_valid_column_name($key)) {
+        if (!SqlHelper::isValidColumnName($key)) {
             continue;
         }
 
         // If the column doesn't exist yet, add it safely (identifier is quoted).
         if (!in_array($key, $dbfields, true)) {
-            $quotedKey = quote_identifier($key);
+            $quotedKey = SqlHelper::quoteIdentifier($key);
             $comment   = isset($sensor_names[$key])
                 ? " COMMENT '" . addslashes($sensor_names[$key]) . "'"
                 : '';
-            $pdo->exec("ALTER TABLE `{$db_table}` ADD {$quotedKey} VARCHAR(255) NOT NULL DEFAULT '0'{$comment}");
+            $pdo->exec("ALTER TABLE `" . DB_TABLE . "` ADD {$quotedKey} VARCHAR(255) NOT NULL DEFAULT '0'{$comment}");
             $dbfields[] = $key;
             $new_columns++;
         } elseif (isset($sensor_names[$key])) {
             // Column exists but may have no comment yet — update it.
-            $quotedKey = quote_identifier($key);
+            $quotedKey = SqlHelper::quoteIdentifier($key);
             $comment   = addslashes($sensor_names[$key]);
             // Only update if INFORMATION_SCHEMA shows comment is currently empty.
             $chk = $pdo->prepare(
@@ -200,11 +168,11 @@ if (count($_GET) > 0) {
             $chk->execute([':s' => $db_name, ':t' => $db_table, ':c' => $key]);
             $existing_comment = (string)($chk->fetchColumn() ?? '');
             if ($existing_comment === '') {
-                $pdo->exec("ALTER TABLE `{$db_table}` MODIFY {$quotedKey} VARCHAR(255) NOT NULL DEFAULT '0' COMMENT '{$comment}'");
+                $pdo->exec("ALTER TABLE `" . DB_TABLE . "` MODIFY {$quotedKey} VARCHAR(255) NOT NULL DEFAULT '0' COMMENT '{$comment}'");
             }
         }
 
-        $keys[]               = quote_identifier($key);
+        $keys[]               = SqlHelper::quoteIdentifier($key);
         $params[':p_' . $key] = $value;
         // Collect k* sensors for the audit log
         if (preg_match('/^k/', $key)) {
@@ -216,23 +184,23 @@ if (count($_GET) > 0) {
         // Build placeholders that match the :p_<key> names above.
         $placeholders = implode(', ', array_keys($params));
         $columns      = implode(', ', $keys);
-        $sql          = "INSERT INTO `{$db_table}` ({$columns}) VALUES ({$placeholders})";
+        $sql          = "INSERT INTO `" . DB_TABLE . "` ({$columns}) VALUES ({$placeholders})";
         $stmt         = $pdo->prepare($sql);
         $stmt->execute($params);
         $sensor_count = count($params);
-        log_torque_request($_GET, 'ok');
+        $logger->info('upload ok', $_GET);
         audit_torque_request($pdo, $_GET, 'ok', $sensor_count, $new_columns, $sensor_map);
     } else {
-        log_torque_request($_GET, 'skipped', 'No valid sensor keys found in request');
+        $logger->info('upload skipped: no valid sensor keys', $_GET);
         audit_torque_request($pdo, $_GET, 'skipped', 0, 0, [], 'No valid sensor keys found in request');
     }
 } else {
-    log_torque_request($_GET, 'skipped', 'Empty GET request');
+    $logger->info('upload skipped: empty request', $_GET);
     audit_torque_request($pdo, $_GET, 'skipped', 0, 0, [], 'Empty GET request');
 }
 
 } catch (Throwable $e) {
-    log_torque_request($_GET, 'error', $e->getMessage());
+    $logger->error('upload error: ' . $e->getMessage(), $_GET);
     audit_torque_request($pdo, $_GET, 'error', 0, 0, [], $e->getMessage());
     // Still return OK so Torque doesn't retry endlessly; error is in the log.
 }
