@@ -6,6 +6,8 @@ declare(strict_types=1);
  *
  * Receives sensor data from the Torque Pro Android app via HTTP GET,
  * validates and persists it to the raw_logs table, and responds with "OK!".
+ * Sensor names arrive as flat keys (userShortName{suffix} / userFullName{suffix})
+ * and are stored as MariaDB column COMMENTs.
  *
  * Auth: Torque-ID based (Auth::checkApp).
  * Logging: PSR-3 FileLogger (daily JSON log).
@@ -45,17 +47,22 @@ $pdo = Connection::get();
 // ============================================================
 
 try {
-// Extract sensor name hints that Torque sends as nested arrays:
-//   userShortName[kXXX]=Name  →  $_GET['userShortName']['kXXX']
-//   userFullName[kXXX]=Name   →  $_GET['userFullName']['kXXX']
-// These are used as column COMMENTs when a new column is first created.
+// Extract sensor name hints that Torque sends as flat GET keys:
+//   userShortName222408=Name  →  column k222408 gets short name
+//   userFullName222408=Name   →  column k222408 gets full name (lower priority)
+// Short names take priority over full names; both are stored as column COMMENTs.
 $sensor_names = [];
-foreach (['userShortName', 'userFullName'] as $nameKey) {
-    if (isset($_GET[$nameKey]) && is_array($_GET[$nameKey])) {
-        foreach ($_GET[$nameKey] as $col => $name) {
-            if (!isset($sensor_names[$col]) && !empty($name)) {
-                $sensor_names[$col] = $name;
-            }
+foreach ($_GET as $rawKey => $name) {
+    if (!is_string($name) || $name === '') {
+        continue;
+    }
+    if (preg_match('/^userShortName(.+)$/', $rawKey, $m)) {
+        $col = 'k' . $m[1];
+        $sensor_names[$col] = $name;   // short name wins — overwrite any full name
+    } elseif (preg_match('/^userFullName(.+)$/', $rawKey, $m)) {
+        $col = 'k' . $m[1];
+        if (!isset($sensor_names[$col])) {
+            $sensor_names[$col] = $name;   // only use full name if no short name seen yet
         }
     }
 }
