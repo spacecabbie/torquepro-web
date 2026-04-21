@@ -131,10 +131,12 @@ foreach ($rawRows as $raw) {
     // Parse the stored query string back into an associative array
     parse_str($raw['raw_query_string'], $params);
 
-    $deviceId    = md5($params['id'] ?? '');
-    $eml         = $params['eml'] ?? null;
-    $profileName = $params['profileName'] ?? null;
-    $timestamp   = isset($params['time']) ? (int)$params['time'] : 0;
+    $deviceId    = ($params['id'] ?? '') !== '' ? md5($params['id']) : null;
+    $eml         = (($params['eml']         ?? '') !== '') ? $params['eml']         : null;
+    $profileName = (($params['profileName'] ?? '') !== '') ? $params['profileName'] : null;
+
+    $rawTime   = $params['time'] ?? '';
+    $timestamp = (is_numeric($rawTime) && (int)$rawTime > 0) ? (int)$rawTime : 0;
 
     if ($timestamp === 0) {
         echo "  [{$rawId}] SKIP — no valid timestamp in query string" . PHP_EOL;
@@ -142,7 +144,7 @@ foreach ($rawRows as $raw) {
         continue;
     }
 
-    // Extract sensor names
+    // Extract sensor names with leading-zero-strip normalisation
     $sensorNames        = [];
     $sensorDescriptions = [];
     foreach ($params as $pk => $pv) {
@@ -150,9 +152,27 @@ foreach ($rawRows as $raw) {
             continue;
         }
         if (preg_match('/^userShortName(.+)$/', $pk, $m)) {
-            $sensorNames['k' . ltrim($m[1], '0')] = $pv;
+            $sfx = ltrim($m[1], '0');
+            $sensorNames['k' . ($sfx !== '' ? $sfx : $m[1])] = $pv;
         } elseif (preg_match('/^userFullName(.+)$/', $pk, $m)) {
-            $sensorDescriptions['k' . ltrim($m[1], '0')] = $pv;
+            $sfx = ltrim($m[1], '0');
+            $sensorDescriptions['k' . ($sfx !== '' ? $sfx : $m[1])] = $pv;
+        }
+    }
+
+    // GPS from trip-start notice (lat=/lon= top-level params)
+    $noticeGpsLat = null;
+    $noticeGpsLon = null;
+    $rawLat = $params['lat'] ?? '';
+    $rawLon = $params['lon'] ?? '';
+    if (is_numeric($rawLat) && is_numeric($rawLon)) {
+        $latC = (float)$rawLat;
+        $lonC = (float)$rawLon;
+        if ($latC >= -90.0 && $latC <= 90.0 && $lonC >= -180.0 && $lonC <= 180.0
+            && ($latC != 0.0 || $lonC != 0.0)
+        ) {
+            $noticeGpsLat = $latC;
+            $noticeGpsLon = $lonC;
         }
     }
 
@@ -182,7 +202,11 @@ foreach ($rawRows as $raw) {
 
         $sensorCount    = 0;
         $newSensorCount = 0;
-        $gpsLat = $gpsLon = $gpsAlt = $gpsSpeed = null;
+        // Seed GPS from trip-start notice params; overridden by k-sensor values below.
+        $gpsLat   = $noticeGpsLat;
+        $gpsLon   = $noticeGpsLon;
+        $gpsAlt   = null;
+        $gpsSpeed = null;
 
         foreach ($params as $key => $value) {
             if (!preg_match('/^k[0-9A-Za-z]+$/', $key)) {
@@ -195,10 +219,27 @@ foreach ($rawRows as $raw) {
             $floatValue = (float) $value;
 
             switch ($key) {
-                case 'kff1005': $gpsLon   = $floatValue; break;
-                case 'kff1006': $gpsLat   = $floatValue; break;
-                case 'kff1010': $gpsAlt   = $floatValue; break;
-                case 'kff1001': $gpsSpeed = $floatValue; break;
+                case 'kff1006':
+                    if ($floatValue >= -90.0 && $floatValue <= 90.0) {
+                        $gpsLat = $floatValue;
+                    }
+                    break;
+                case 'kff1005':
+                    if ($floatValue >= -180.0 && $floatValue <= 180.0) {
+                        $gpsLon = $floatValue;
+                    }
+                    break;
+                case 'kff1009':
+                    if ($gpsAlt === null) {
+                        $gpsAlt = $floatValue;
+                    }
+                    break;
+                case 'kff1010':
+                    $gpsAlt = $floatValue;
+                    break;
+                case 'kff1001':
+                    $gpsSpeed = $floatValue;
+                    break;
             }
 
             $sensorCount++;
@@ -230,17 +271,15 @@ foreach ($rawRows as $raw) {
             ]);
         }
 
-        // Update session end_time + totals
-        if ($sensorCount > 0) {
-            $stmtSessionUpdate->execute([
-                ':ts'           => $timestamp,
-                ':sensor_count' => $sensorCount,
-                ':profile_name' => $profileName,
-                ':session_id'   => $sessionId,
-            ]);
-        }
+        // Update session end_time + totals (runs even for metadata-only rows)
+        $stmtSessionUpdate->execute([
+            ':ts'           => $timestamp,
+            ':sensor_count' => $sensorCount,
+            ':profile_name' => $profileName,
+            ':session_id'   => $sessionId,
+        ]);
 
-        // GPS point
+        // GPS point (k-sensor or trip-start notice)
         if ($gpsLat !== null && $gpsLon !== null && ($gpsLat != 0.0 || $gpsLon != 0.0)) {
             $stmtGps->execute([
                 ':session_id' => $sessionId,
