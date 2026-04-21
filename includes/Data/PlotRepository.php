@@ -72,6 +72,12 @@ class PlotRepository
         $table       = defined('DB_TABLE') ? DB_TABLE : 'raw_logs';
         $allowedCols = array_column($columns, 'colname');
 
+        // Build column name → comment map for label lookup (DB COLUMN_COMMENT takes priority).
+        $colCommentMap = [];
+        foreach ($columns as $col) {
+            $colCommentMap[$col['colname']] = $col['colcomment'];
+        }
+
         $v1 = ($v1 !== null && in_array($v1, $allowedCols, true)) ? $v1 : self::DEFAULT_V1;
         $v2 = ($v2 !== null && in_array($v2, $allowedCols, true)) ? $v2 : self::DEFAULT_V2;
 
@@ -108,8 +114,9 @@ class PlotRepository
             return null;
         }
 
-        $label1 = ($jsarr[$v1] ?? $v1) . ($unit1 ?? '');
-        $label2 = ($jsarr[$v2] ?? $v2) . ($unit2 ?? '');
+        // Use DB COLUMN_COMMENT if available, else torque_keys.csv, else raw column name.
+        $label1 = ($colCommentMap[$v1] ?: ($jsarr[$v1] ?? $v1)) . ($unit1 ?? '');
+        $label2 = ($colCommentMap[$v2] ?: ($jsarr[$v2] ?? $v2)) . ($unit2 ?? '');
 
         return [
             'v1'        => $v1,
