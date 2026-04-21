@@ -6,27 +6,30 @@ namespace TorqueLogs\Session;
 /**
  * Manages destructive session operations — delete and merge.
  *
- * Both methods operate on the raw_logs table. Validations are performed
- * before any write to prevent data corruption.
+ * Both methods operate on the sessions table. DELETE cascades to 
+ * sensor_readings and gps_points automatically via foreign key constraints.
  *
- * Origin: del_session.php, merge_sessions.php
+ * Origin: del_session.php, merge_sessions.php (updated for normalized schema)
  */
 class SessionManager
 {
     public function __construct(private readonly \PDO $pdo) {}
 
     /**
-     * Delete all rows belonging to a session.
+     * Delete a session and all its related data.
      *
-     * @param  string $sessionId  Numeric session ID to delete.
-     * @return int                Number of rows deleted.
+     * Due to ON DELETE CASCADE foreign keys, this automatically deletes:
+     * - All sensor_readings for this session
+     * - All gps_points for this session
+     * - All upload_requests_processed entries
+     *
+     * @param  string $sessionId  Session ID to delete.
+     * @return int                Number of rows deleted (from sessions table).
      * @throws \PDOException on database failure
      */
     public function delete(string $sessionId): int
     {
-        $table = defined('DB_TABLE') ? DB_TABLE : 'raw_logs';
-
-        $stmt = $this->pdo->prepare("DELETE FROM `{$table}` WHERE session = :sid");
+        $stmt = $this->pdo->prepare("DELETE FROM sessions WHERE session_id = :sid");
         $stmt->execute([':sid' => $sessionId]);
 
         return $stmt->rowCount();
@@ -43,7 +46,12 @@ class SessionManager
      * Returns the surviving session ID ($intoId) on success, or null if the
      * adjacency validation fails.
      *
-     * Origin: merge_sessions.php
+     * Updates:
+     * - sensor_readings.session_id
+     * - gps_points.session_id
+     * - sessions table (combines upload counts and timestamps)
+     *
+     * Origin: merge_sessions.php (updated for normalized schema)
      *
      * @param  string        $intoId   Session ID to merge into (older, survives).
      * @param  string        $withId   Session ID to be absorbed (younger, deleted).
@@ -62,13 +70,49 @@ class SessionManager
             return null;
         }
 
-        $table = defined('DB_TABLE') ? DB_TABLE : 'raw_logs';
+        $this->pdo->beginTransaction();
 
-        $stmt = $this->pdo->prepare(
-            "UPDATE `{$table}` SET session = :into WHERE session = :with"
-        );
-        $stmt->execute([':into' => $intoId, ':with' => $withId]);
+        try {
+            // Update sensor_readings
+            $stmt = $this->pdo->prepare(
+                "UPDATE sensor_readings SET session_id = :into WHERE session_id = :with"
+            );
+            $stmt->execute([':into' => $intoId, ':with' => $withId]);
 
-        return $intoId;
+            // Update gps_points
+            $stmt = $this->pdo->prepare(
+                "UPDATE gps_points SET session_id = :into WHERE session_id = :with"
+            );
+            $stmt->execute([':into' => $intoId, ':with' => $withId]);
+
+            // Update upload_requests_processed
+            $stmt = $this->pdo->prepare(
+                "UPDATE upload_requests_processed SET session_id = :into WHERE session_id = :with"
+            );
+            $stmt->execute([':into' => $intoId, ':with' => $withId]);
+
+            // Combine session metadata and delete the absorbed session
+            // Update the surviving session's timestamps and upload count
+            $stmt = $this->pdo->prepare(
+                "UPDATE sessions s1
+                 JOIN sessions s2 ON s2.session_id = :with
+                 SET s1.start_time = LEAST(s1.start_time, s2.start_time),
+                     s1.last_update = GREATEST(s1.last_update, s2.last_update),
+                     s1.upload_count = s1.upload_count + s2.upload_count
+                 WHERE s1.session_id = :into"
+            );
+            $stmt->execute([':into' => $intoId, ':with' => $withId]);
+
+            // Delete the absorbed session
+            $stmt = $this->pdo->prepare("DELETE FROM sessions WHERE session_id = :with");
+            $stmt->execute([':with' => $withId]);
+
+            $this->pdo->commit();
+            return $intoId;
+            
+        } catch (\Throwable $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
     }
 }

@@ -6,20 +6,14 @@ namespace TorqueLogs\Data;
 /**
  * Loads GPS track coordinates for a session.
  *
- * Reads the Torque latitude (kff1006) and longitude (kff1005) columns from
- * the raw_logs table, filters out zero-coordinate rows (no fix), and returns
+ * Reads the latitude and longitude from the gps_points table,
+ * filters out zero-coordinate rows (no fix), and returns
  * the track as a structured array and a Leaflet-ready JS literal string.
  *
- * Origin: GPS query block in dashboard.php
+ * Origin: GPS query block in dashboard.php (updated for normalized schema)
  */
 class GpsRepository
 {
-    /** Torque column name for latitude. */
-    private const COL_LAT = 'kff1006';
-
-    /** Torque column name for longitude. */
-    private const COL_LON = 'kff1005';
-
     /** Leaflet JS literal returned when no GPS data is available. */
     public const DEFAULT_MAP_DATA = '[[37.235, -115.8111]]';
 
@@ -33,27 +27,26 @@ class GpsRepository
      *  - 'mapdata'  string  Leaflet LatLng array literal, e.g. '[[lat,lon],…]'
      *               Falls back to DEFAULT_MAP_DATA when no fix exists.
      *
-     * @param  string $sessionId  Numeric session ID.
+     * @param  string $sessionId  Session ID string.
      * @return array{points: list<array{lat: string, lon: string}>, mapdata: string}
      * @throws \PDOException on database failure
      */
     public function findTrack(string $sessionId): array
     {
-        $table = defined('DB_TABLE') ? DB_TABLE : 'raw_logs';
-
+        // Query the gps_points table
         $stmt = $this->pdo->prepare(
-            "SELECT `" . self::COL_LAT . "`, `" . self::COL_LON . "`
-             FROM `{$table}`
-             WHERE session = :sid
-             ORDER BY time DESC"
+            "SELECT latitude, longitude
+             FROM gps_points
+             WHERE session_id = :sid
+             ORDER BY ts DESC"
         );
         $stmt->execute([':sid' => $sessionId]);
 
         $points = [];
 
         foreach ($stmt->fetchAll() as $row) {
-            $lat = $row[self::COL_LAT];
-            $lon = $row[self::COL_LON];
+            $lat = $row['latitude'];
+            $lon = $row['longitude'];
 
             // Skip rows with no GPS fix (either coordinate is zero means invalid).
             if ((float) $lat === 0.0 || (float) $lon === 0.0) {

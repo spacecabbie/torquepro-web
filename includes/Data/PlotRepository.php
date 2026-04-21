@@ -69,10 +69,9 @@ class PlotRepository
             return null;
         }
 
-        $table       = defined('DB_TABLE') ? DB_TABLE : 'raw_logs';
         $allowedCols = array_column($columns, 'colname');
 
-        // Build column name → comment map for label lookup (DB COLUMN_COMMENT takes priority).
+        // Build column name → comment map for label lookup (DB sensor.short_name takes priority).
         $colCommentMap = [];
         foreach ($columns as $col) {
             $colCommentMap[$col['colname']] = $col['colcomment'];
@@ -84,16 +83,23 @@ class PlotRepository
         // Load Torque key → human-readable label map.
         $jsarr = json_decode(DataHelper::csvToJson($csvPath), true) ?? [];
 
-        $q1 = '`' . str_replace('`', '``', $v1) . '`';
-        $q2 = '`' . str_replace('`', '``', $v2) . '`';
-
+        // Query sensor_readings table with PIVOT-like query
         $stmt = $this->pdo->prepare(
-            "SELECT time, {$q1}, {$q2}
-             FROM `{$table}`
-             WHERE session = :sid
-             ORDER BY time DESC"
+            "SELECT 
+                UNIX_TIMESTAMP(ts) * 1000 AS time,
+                MAX(CASE WHEN sensor_key = :v1 THEN value END) AS v1_value,
+                MAX(CASE WHEN sensor_key = :v2 THEN value END) AS v2_value
+             FROM sensor_readings
+             WHERE session_id = :sid
+               AND sensor_key IN (:v1, :v2)
+             GROUP BY ts
+             ORDER BY ts DESC"
         );
-        $stmt->execute([':sid' => $sessionId]);
+        $stmt->execute([
+            ':sid' => $sessionId,
+            ':v1'  => $v1,
+            ':v2'  => $v2
+        ]);
 
         [$speedFactor, $speedUnit] = $this->resolveSpeedConversion();
         [$tempFunc,    $tempUnit]  = $this->resolveTempConversion();
@@ -101,8 +107,11 @@ class PlotRepository
         $d1 = $d2 = $spark1 = $spark2 = [];
 
         foreach ($stmt->fetchAll() as $row) {
-            [$x1, $unit1] = $this->convertValue((float) $row[$v1], $jsarr[$v1] ?? '', $speedFactor, $speedUnit, $tempFunc, $tempUnit);
-            [$x2, $unit2] = $this->convertValue((float) $row[$v2], $jsarr[$v2] ?? '', $speedFactor, $speedUnit, $tempFunc, $tempUnit);
+            $v1_raw = (float) ($row['v1_value'] ?? 0);
+            $v2_raw = (float) ($row['v2_value'] ?? 0);
+            
+            [$x1, $unit1] = $this->convertValue($v1_raw, $jsarr[$v1] ?? '', $speedFactor, $speedUnit, $tempFunc, $tempUnit);
+            [$x2, $unit2] = $this->convertValue($v2_raw, $jsarr[$v2] ?? '', $speedFactor, $speedUnit, $tempFunc, $tempUnit);
 
             $d1[]     = [$row['time'], $x1];
             $d2[]     = [$row['time'], $x2];
@@ -114,7 +123,7 @@ class PlotRepository
             return null;
         }
 
-        // Use DB COLUMN_COMMENT if available, else torque_keys.csv, else raw column name.
+        // Use DB sensor.short_name if available, else torque_keys.csv, else raw column name.
         $label1 = ($colCommentMap[$v1] ?: ($jsarr[$v1] ?? $v1)) . ($unit1 ?? '');
         $label2 = ($colCommentMap[$v2] ?: ($jsarr[$v2] ?? $v2)) . ($unit2 ?? '');
 

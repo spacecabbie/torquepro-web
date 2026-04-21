@@ -6,11 +6,10 @@ namespace TorqueLogs\Data;
 /**
  * Loads and summarises the list of upload sessions.
  *
- * Reads from the raw_logs table (DB_TABLE constant), groups rows by the
- * session column, and discards single-ping noise (sessions with fewer than
- * 2 data points). Returns structured arrays ready for view consumption.
+ * Reads from the sessions table and discards single-ping noise (sessions with 
+ * fewer than 2 data points). Returns structured arrays ready for view consumption.
  *
- * Origin: get_sessions.php
+ * Origin: get_sessions.php (updated for normalized schema)
  */
 class SessionRepository
 {
@@ -36,16 +35,16 @@ class SessionRepository
      */
     public function findAll(): array
     {
-        $table = defined('DB_TABLE') ? DB_TABLE : 'raw_logs';
-
+        // Query the sessions table (includes pre-calculated upload_count and timestamps)
         $stmt = $this->pdo->query(
-            "SELECT COUNT(*) AS `Session Size`,
-                    MIN(time)  AS `MinTime`,
-                    MAX(time)  AS `MaxTime`,
-                    session
-             FROM `{$table}`
-             GROUP BY session
-             ORDER BY time DESC"
+            "SELECT 
+                session_id,
+                upload_count,
+                start_time,
+                last_update,
+                TIMESTAMPDIFF(SECOND, start_time, last_update) AS duration_sec
+             FROM sessions
+             ORDER BY start_time DESC"
         );
 
         $sids  = [];
@@ -53,20 +52,21 @@ class SessionRepository
         $sizes = [];
 
         foreach ($stmt->fetchAll() as $row) {
-            $sessionSize = (int) $row['Session Size'];
+            $uploadCount = (int) $row['upload_count'];
 
-            if ($sessionSize < self::MIN_SESSION_SIZE) {
+            // Skip sessions with too few data points
+            if ($uploadCount < self::MIN_SESSION_SIZE) {
                 continue;
             }
 
-            $sid      = (string) $row['session'];
+            $sid      = (string) $row['session_id'];
             $cleanSid = preg_replace('/\D/', '', $sid) ?? '';
 
-            $durationMs  = (int) $row['MaxTime'] - (int) $row['MinTime'];
-            $durationStr = gmdate('H:i:s', (int) ($durationMs / 1000));
+            $durationSec = (int) $row['duration_sec'];
+            $durationStr = gmdate('H:i:s', $durationSec);
 
             $sids[]        = $cleanSid;
-            $dates[$sid]   = date('F d, Y  H:i', (int) substr($sid, 0, -3));
+            $dates[$sid]   = date('F d, Y  H:i', strtotime($row['start_time']));
             $sizes[$sid]   = ' (Length ' . $durationStr . ')';
         }
 

@@ -6,94 +6,81 @@ namespace TorqueLogs\Data;
 /**
  * Loads plottable column metadata and per-session emptiness flags.
  *
- * Queries INFORMATION_SCHEMA for k* sensor columns in the raw_logs table
- * and determines which columns contain meaningful data for a given session.
+ * Queries the sensors table for registered k* sensors and determines which 
+ * sensors contain meaningful data for a given session.
  *
- * Origin: get_columns.php
+ * Origin: get_columns.php (updated for normalized schema)
  */
 class ColumnRepository
 {
-    /**
-     * MariaDB/MySQL data types considered plottable as numeric series.
-     * varchar is included because Torque stores all sensor readings as varchar
-     * even though the values are always numeric.
-     *
-     * @var list<string>
-     */
-    private const PLOTTABLE_TYPES = ['float', 'varchar', 'double', 'decimal', 'int', 'bigint'];
-
     public function __construct(private readonly \PDO $pdo) {}
 
     /**
-     * Return all plottable sensor columns from the raw_logs table.
+     * Return all plottable sensor columns from the sensors table.
      *
      * Each entry contains:
-     *  - 'colname'    string  MariaDB column name (e.g. 'kd', 'kff1006')
-     *  - 'colcomment' string  Human-readable sensor name from COLUMN_COMMENT
+     *  - 'colname'    string  Sensor key (e.g. 'kd', 'kff1006')
+     *  - 'colcomment' string  Human-readable sensor name from short_name
      *
      * @return list<array{colname: string, colcomment: string}>
      * @throws \PDOException on database failure
      */
     public function findPlottable(): array
     {
-        $schema = defined('DB_NAME')  ? DB_NAME  : '';
-        $table  = defined('DB_TABLE') ? DB_TABLE : 'raw_logs';
-
-        $stmt = $this->pdo->prepare(
-            "SELECT COLUMN_NAME, COLUMN_COMMENT, DATA_TYPE
-             FROM INFORMATION_SCHEMA.COLUMNS
-             WHERE TABLE_SCHEMA = :schema
-               AND TABLE_NAME   = :table"
+        // Query the sensors table for all registered sensors
+        $stmt = $this->pdo->query(
+            "SELECT sensor_key, short_name, full_name
+             FROM sensors
+             ORDER BY sensor_key"
         );
-        $stmt->execute([':schema' => $schema, ':table' => $table]);
 
         $columns = [];
 
         foreach ($stmt->fetchAll() as $row) {
-            if (
-                str_starts_with($row['COLUMN_NAME'], 'k') &&
-                in_array($row['DATA_TYPE'], self::PLOTTABLE_TYPES, true)
-            ) {
-                $columns[] = [
-                    'colname'    => $row['COLUMN_NAME'],
-                    'colcomment' => $row['COLUMN_COMMENT'],
-                ];
-            }
+            // Use short_name if available, otherwise full_name, otherwise sensor_key
+            $displayName = $row['short_name'] ?: $row['full_name'] ?: $row['sensor_key'];
+            
+            $columns[] = [
+                'colname'    => $row['sensor_key'],
+                'colcomment' => $displayName,
+            ];
         }
 
         return $columns;
     }
 
     /**
-     * Return a map of column name → bool indicating whether each column
+     * Return a map of sensor key → bool indicating whether each sensor
      * contains fewer than 2 distinct non-null values for the given session.
      *
-     * A column is considered "empty" (true) when it has < 2 distinct values,
+     * A sensor is considered "empty" (true) when it has < 2 distinct values,
      * meaning it carries no useful variation to plot.
      *
-     * @param  string                             $sessionId  Numeric session ID.
+     * @param  string                             $sessionId  Session ID string.
      * @param  list<array{colname: string, colcomment: string}> $columns   Output of findPlottable().
-     * @return array<string, bool>  colname → true if empty, false if has data.
+     * @return array<string, bool>  sensor_key → true if empty, false if has data.
      * @throws \PDOException on database failure
      */
     public function findEmpty(string $sessionId, array $columns): array
     {
-        $table  = defined('DB_TABLE') ? DB_TABLE : 'raw_logs';
         $result = [];
 
         foreach ($columns as $col) {
-            $colname    = $col['colname'];
-            $quotedCol  = '`' . str_replace('`', '``', $colname) . '`';
+            $sensorKey = $col['colname'];
 
+            // Check how many distinct values this sensor has for this session
             $stmt = $this->pdo->prepare(
-                "SELECT COUNT(DISTINCT {$quotedCol}) < 2 AS is_empty
-                 FROM `{$table}`
-                 WHERE session = :sid"
+                "SELECT COUNT(DISTINCT value) < 2 AS is_empty
+                 FROM sensor_readings
+                 WHERE session_id = :sid AND sensor_key = :sensor_key"
             );
-            $stmt->execute([':sid' => $sessionId]);
+            $stmt->execute([
+                ':sid'        => $sessionId,
+                ':sensor_key' => $sensorKey
+            ]);
             $row = $stmt->fetch();
 
-            $result[$colname] = (bool) $row['is_empty'];
+            $result[$sensorKey] = (bool) $row['is_empty'];
         }
 
         return $result;
