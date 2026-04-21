@@ -153,7 +153,7 @@ class Auth
      *
      * @return void
      */
-    private static function startSession(): void
+    public static function startSession(): void
     {
         if (session_status() === PHP_SESSION_NONE) {
             session_set_cookie_params(0, dirname($_SERVER['SCRIPT_NAME'] ?? '/'));
