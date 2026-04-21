@@ -97,8 +97,8 @@ class SessionManager
                 "UPDATE sessions s1
                  JOIN sessions s2 ON s2.session_id = :with
                  SET s1.start_time = LEAST(s1.start_time, s2.start_time),
-                     s1.last_update = GREATEST(s1.last_update, s2.last_update),
-                     s1.upload_count = s1.upload_count + s2.upload_count
+                     s1.end_time = GREATEST(s1.end_time, s2.end_time),
+                     s1.total_readings = s1.total_readings + s2.total_readings
                  WHERE s1.session_id = :into"
             );
             $stmt->execute([':into' => $intoId, ':with' => $withId]);

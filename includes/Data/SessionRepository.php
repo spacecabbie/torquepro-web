@@ -35,14 +35,14 @@ class SessionRepository
      */
     public function findAll(): array
     {
-        // Query the sessions table (includes pre-calculated upload_count and timestamps)
+        // Query the sessions table (includes pre-calculated total_readings and timestamps)
         $stmt = $this->pdo->query(
             "SELECT 
                 session_id,
-                upload_count,
+                total_readings,
                 start_time,
-                last_update,
-                TIMESTAMPDIFF(SECOND, start_time, last_update) AS duration_sec
+                end_time,
+                TIMESTAMPDIFF(SECOND, start_time, end_time) AS duration_sec
              FROM sessions
              ORDER BY start_time DESC"
         );
@@ -52,7 +52,7 @@ class SessionRepository
         $sizes = [];
 
         foreach ($stmt->fetchAll() as $row) {
-            $uploadCount = (int) $row['upload_count'];
+            $uploadCount = (int) $row['total_readings'];
 
             // Skip sessions with too few data points
             if ($uploadCount < self::MIN_SESSION_SIZE) {

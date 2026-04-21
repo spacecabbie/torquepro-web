@@ -43,7 +43,8 @@ try {
     $sessionId      = $_GET['session'] ?? null;
     $eml            = $_GET['eml'] ?? null;
     $profileName    = $_GET['profileName'] ?? null;
-    $timestamp      = isset($_GET['time']) ? (int)$_GET['time'] : null;
+    // Ensure we always have a timestamp (Torque sends Unix ms). Fallback to now in ms.
+    $timestamp      = isset($_GET['time']) ? (int)$_GET['time'] : (int) (microtime(true) * 1000);
     $uploadDate     = date('Y-m-d');
     
     // ── Insert raw audit log (partitioned for archival) ────────────────────
@@ -80,7 +81,8 @@ try {
     }
     
     // ── UPSERT session ──────────────────────────────────────────────────────
-    if ($sessionId !== null && $eml !== null) {
+    // Upsert session even if email is not provided; profileName captured earlier.
+    if ($sessionId !== null) {
         $stmtSession = $pdo->prepare("
             INSERT INTO sessions (session_id, device_id, start_time, end_time, email, profile_name)
             VALUES (:session_id, :device_id, FROM_UNIXTIME(:ts / 1000), FROM_UNIXTIME(:ts / 1000), :email, :profile_name)
@@ -92,9 +94,9 @@ try {
         $stmtSession->execute([
             ':session_id'   => $sessionId,
             ':device_id'    => $deviceId,
-            ':ts'           => $timestamp ?? time() * 1000,
+            ':ts'           => $timestamp,
             ':email'        => $eml,
-            ':profile_name' => $profileName
+            ':profile_name' => $profileName,
         ]);
     }
     
@@ -105,8 +107,8 @@ try {
     $gpsLon = null;
     
     foreach ($_GET as $key => $value) {
-        // Only process k* sensor keys
-        if (!preg_match('/^k[a-fA-F0-9]+$/', $key)) {
+        // Only process k* sensor keys (alphanumeric allowed: kd, kf, k222408, etc.)
+        if (!preg_match('/^k[0-9A-Za-z]+$/', $key)) {
             continue;
         }
         
@@ -119,13 +121,13 @@ try {
         
         $sensorCount++;
         
-        // Check if sensor exists
-        $stmtCheck = $pdo->prepare("SELECT id FROM sensors WHERE sensor_key = :key");
-        $stmtCheck->execute([':key' => $key]);
-        $sensorId = $stmtCheck->fetchColumn();
+    // Check if sensor exists (schema uses sensor_key as PRIMARY KEY)
+    $stmtCheck = $pdo->prepare("SELECT sensor_key FROM sensors WHERE sensor_key = :key");
+    $stmtCheck->execute([':key' => $key]);
+    $sensorKeyExists = $stmtCheck->fetchColumn();
         
         // If sensor doesn't exist, create it
-        if ($sensorId === false) {
+        if ($sensorKeyExists === false) {
             $shortName = $sensorNames[$key] ?? $key;
             $fullName = $sensorDescriptions[$key] ?? null;
             
@@ -138,7 +140,7 @@ try {
                 ':short_name' => $shortName,
                 ':full_name'  => $fullName
             ]);
-            $sensorId = (int)$pdo->lastInsertId();
+            $sensorId = $key;
             $newSensorCount++;
         } else {
             // Update sensor name if provided and different
@@ -156,7 +158,7 @@ try {
         }
         
         // Insert sensor reading (timestamp is BIGINT in Unix milliseconds)
-        if ($sessionId !== null && $timestamp !== null) {
+        if ($sessionId !== null) {
             $stmtReading = $pdo->prepare("
                 INSERT INTO sensor_readings (session_id, timestamp, sensor_key, value)
                 VALUES (:session_id, :timestamp, :sensor_key, :value)
