@@ -121,10 +121,11 @@ $plotData = $hasSession
         $sids,
         $coldata,
         $_GET['s1'] ?? null,
-        $_GET['s2'] ?? null,
-        __DIR__ . '/data/torque_keys.csv'
+        $_GET['s2'] ?? null
     )
     : null;
+
+$hasPlotData = ($plotData !== null && !($plotData['no_data'] ?? false));
 
 // Flatten plot variables for the view (preserving original variable names).
 $v1          = $plotData['v1']        ?? 'kd';
@@ -384,7 +385,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
     <!-- ── Stat cards ── -->
     <div class="row g-3 mb-3">
 
-        <?php if ($hasSession && $plotData !== null): ?>
+        <?php if ($hasPlotData): ?>
         <div class="col-6 col-lg-3">
             <div class="stat-card bg-speed">
                 <div class="stat-label"><?php echo htmlspecialchars(substr($v1_label, 1, -1), ENT_QUOTES, 'UTF-8'); ?></div>
@@ -404,14 +405,14 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
             <div class="stat-card bg-speed">
                 <div class="stat-label">Variable 1</div>
                 <div class="stat-value">—</div>
-                <div class="stat-sub">select a session</div>
+                <div class="stat-sub"><?php echo ($hasSession && ($plotData['no_data'] ?? false)) ? 'no data' : 'select a session'; ?></div>
             </div>
         </div>
         <div class="col-6 col-lg-3">
             <div class="stat-card bg-temp">
                 <div class="stat-label">Variable 2</div>
                 <div class="stat-value">—</div>
-                <div class="stat-sub">select a session</div>
+                <div class="stat-sub"><?php echo ($hasSession && ($plotData['no_data'] ?? false)) ? 'no data' : 'select a session'; ?></div>
             </div>
         </div>
         <?php endif; ?>
@@ -450,7 +451,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
             <div class="card h-100">
                 <div class="card-header">Data Summary</div>
                 <div class="card-body">
-                <?php if ($hasSession && $plotData !== null): ?>
+                <?php if ($hasPlotData): ?>
                     <div class="table-responsive">
                         <table class="table table-sm table-hover align-middle mb-0">
                             <thead class="table-light">
@@ -490,7 +491,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
                     <div class="d-flex align-items-center justify-content-center h-100 text-muted" style="min-height:180px">
                         <div class="text-center">
                             <div style="font-size:2rem">📊</div>
-                            <div class="mt-2">Select a session to see statistics</div>
+                            <div class="mt-2"><?php echo ($hasSession && ($plotData['no_data'] ?? false)) ? 'No sensor data for selected variables' : 'Select a session to see statistics'; ?></div>
                         </div>
                     </div>
                 <?php endif; ?>
@@ -520,7 +521,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
                     <div class="d-flex align-items-center justify-content-center text-muted" style="height:280px">
                         <div class="text-center">
                             <div style="font-size:2rem">📈</div>
-                            <div class="mt-2">Select a session and variables to plot</div>
+                            <div class="mt-2"><?php echo ($hasSession && ($plotData['no_data'] ?? false)) ? 'No sensor data for selected variables' : 'Select a session and variables to plot'; ?></div>
                         </div>
                     </div>
                 <?php endif; ?>

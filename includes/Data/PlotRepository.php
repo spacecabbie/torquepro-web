@@ -36,6 +36,8 @@ class PlotRepository
      * — only column names present in this list are accepted as $v1 / $v2.
      *
      * Returns null when the session ID is not in $allowedSids.
+     * Returns ['no_data' => true] when the session exists but has no readings
+     * for the requested sensor pair.
      *
      * The return array contains:
      *  - v1, v2              string   actual column names used
@@ -47,13 +49,13 @@ class PlotRepository
      *  - avg1, avg2          float
      *  - pcnt25_1, pcnt25_2  float
      *  - pcnt75_1, pcnt75_2  float
+     *  - no_data             bool     true when session has no readings for this sensor pair
      *
      * @param  string        $sessionId   Validated numeric session ID.
      * @param  list<string>  $allowedSids All known session IDs (whitelist check).
      * @param  list<array{colname: string, colcomment: string}> $columns Plottable columns.
      * @param  string|null   $v1          Requested column 1 (validated against $columns).
      * @param  string|null   $v2          Requested column 2 (validated against $columns).
-     * @param  string        $csvPath     Absolute path to torque_keys.csv.
      * @return array<string,mixed>|null   Null if session is not in $allowedSids.
      * @throws \PDOException on database failure
      */
@@ -62,8 +64,7 @@ class PlotRepository
         array    $allowedSids,
         array    $columns,
         ?string  $v1,
-        ?string  $v2,
-        string   $csvPath
+        ?string  $v2
     ): ?array {
         if (!in_array($sessionId, $allowedSids, true)) {
             return null;
@@ -79,9 +80,6 @@ class PlotRepository
 
         $v1 = ($v1 !== null && in_array($v1, $allowedCols, true)) ? $v1 : self::DEFAULT_V1;
         $v2 = ($v2 !== null && in_array($v2, $allowedCols, true)) ? $v2 : self::DEFAULT_V2;
-
-        // Load Torque key → human-readable label map.
-        $jsarr = json_decode(DataHelper::csvToJson($csvPath), true) ?? [];
 
         // Query sensor_readings table with PIVOT-like query.
         // Note: each named placeholder may only appear once in a PDO statement
@@ -115,8 +113,8 @@ class PlotRepository
             $v1_raw = (float) ($row['v1_value'] ?? 0);
             $v2_raw = (float) ($row['v2_value'] ?? 0);
             
-            [$x1, $unit1] = $this->convertValue($v1_raw, $jsarr[$v1] ?? '', $speedFactor, $speedUnit, $tempFunc, $tempUnit);
-            [$x2, $unit2] = $this->convertValue($v2_raw, $jsarr[$v2] ?? '', $speedFactor, $speedUnit, $tempFunc, $tempUnit);
+            [$x1, $unit1] = $this->convertValue($v1_raw, $colCommentMap[$v1] ?? '', $speedFactor, $speedUnit, $tempFunc, $tempUnit);
+            [$x2, $unit2] = $this->convertValue($v2_raw, $colCommentMap[$v2] ?? '', $speedFactor, $speedUnit, $tempFunc, $tempUnit);
 
             $d1[]     = [$row['time'], $x1];
             $d2[]     = [$row['time'], $x2];
@@ -125,12 +123,12 @@ class PlotRepository
         }
 
         if (empty($spark1) || empty($spark2)) {
-            return null;
+            return ['no_data' => true];
         }
 
-        // Use DB sensor.short_name if available, else torque_keys.csv, else raw column name.
-        $label1 = ($colCommentMap[$v1] ?: ($jsarr[$v1] ?? $v1)) . ($unit1 ?? '');
-        $label2 = ($colCommentMap[$v2] ?: ($jsarr[$v2] ?? $v2)) . ($unit2 ?? '');
+        // Use DB sensor.short_name if available, else raw column name.
+        $label1 = ($colCommentMap[$v1] ?: $v1) . ($unit1 ?? '');
+        $label2 = ($colCommentMap[$v2] ?: $v2) . ($unit2 ?? '');
 
         return [
             'v1'        => $v1,

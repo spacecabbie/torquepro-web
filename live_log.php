@@ -72,37 +72,64 @@ if (isset($_GET['data'])) {
         $stmt->execute([':since_id' => $since_id]);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        // ── Per-row sensor snapshot ──────────────────────────────────────
-        // For each upload that has a processed summary, fetch the sensor
-        // readings at that exact timestamp to populate the sensor modal.
-        $sensorStmt = $pdo->prepare(
-            "SELECT sr.sensor_key, sr.value,
-                    COALESCE(s.short_name, sr.sensor_key) AS sensor_name
-             FROM sensor_readings sr
-             LEFT JOIN sensors s ON s.sensor_key = sr.sensor_key
-             WHERE sr.session_id = :sid AND sr.timestamp = :ts"
-        );
+        // ── Batch sensor snapshots ───────────────────────────────────────
+        // Collect all (session_id, timestamp) pairs that have processed data,
+        // then fetch all their sensor readings in ONE query instead of one
+        // query per row (avoids up to 100 extra round-trips per poll).
+        $pairIndex = [];   // "sid|ts" → row index in $rows
+        foreach ($rows as $i => $r) {
+            if ($r['session'] !== '' && $r['session'] !== null && $r['data_ts'] !== null) {
+                $pairIndex[$r['session'] . '|' . $r['data_ts']] = $i;
+            }
+        }
 
+        // Initialise sensor_data on every row.
         foreach ($rows as &$r) {
             $r['id']           = (int)$r['id'];
             $r['sensor_count'] = (int)$r['sensor_count'];
             $r['new_columns']  = (int)$r['new_columns'];
             $r['data_ts']      = $r['data_ts'] !== null ? (int)$r['data_ts'] : null;
+            $r['sensor_data']  = null;
+        }
+        unset($r);
 
-            // Build sensor_data map: key => value (matches old JSON blob shape).
-            $r['sensor_data'] = null;
-            if ($r['session'] !== '' && $r['session'] !== null && $r['data_ts'] !== null) {
-                $sensorStmt->execute([':sid' => $r['session'], ':ts' => $r['data_ts']]);
-                $sensorRows = $sensorStmt->fetchAll(PDO::FETCH_ASSOC);
-                if (!empty($sensorRows)) {
-                    $r['sensor_data'] = [];
-                    foreach ($sensorRows as $sr) {
-                        $r['sensor_data'][$sr['sensor_key']] = $sr['value'];
+        if (!empty($pairIndex)) {
+            // Build WHERE (session_id, timestamp) IN (…) clause.
+            $placeholders = [];
+            $bindings     = [];
+            $idx          = 0;
+            foreach ($pairIndex as $pair => $_) {
+                [$sid, $ts] = explode('|', $pair, 2);
+                $sp = ':s' . $idx;
+                $tp = ':t' . $idx;
+                $placeholders[] = "($sp,$tp)";
+                $bindings[$sp]  = $sid;
+                $bindings[$tp]  = (int)$ts;
+                $idx++;
+            }
+
+            $inClause   = implode(',', $placeholders);
+            $snapStmt   = $pdo->prepare(
+                "SELECT sr.session_id, sr.timestamp, sr.sensor_key, sr.value,
+                        COALESCE(s.short_name, sr.sensor_key) AS sensor_name
+                 FROM sensor_readings sr
+                 LEFT JOIN sensors s ON s.sensor_key = sr.sensor_key
+                 WHERE (sr.session_id, sr.timestamp) IN ($inClause)"
+            );
+            $snapStmt->execute($bindings);
+
+            // Distribute readings back into the matching row.
+            foreach ($snapStmt->fetchAll(PDO::FETCH_ASSOC) as $sr) {
+                $key = $sr['session_id'] . '|' . $sr['timestamp'];
+                if (isset($pairIndex[$key])) {
+                    $i = $pairIndex[$key];
+                    if ($rows[$i]['sensor_data'] === null) {
+                        $rows[$i]['sensor_data'] = [];
                     }
+                    $rows[$i]['sensor_data'][$sr['sensor_key']] = $sr['value'];
                 }
             }
         }
-        unset($r);
 
         // ── Sensor name lookup table ─────────────────────────────────────
         // Old code queried INFORMATION_SCHEMA k% COLUMN_COMMENT.

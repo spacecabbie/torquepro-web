@@ -56,6 +56,9 @@ class ColumnRepository
      * A sensor is considered "empty" (true) when it has < 2 distinct values,
      * meaning it carries no useful variation to plot.
      *
+     * Uses a single aggregated query instead of one query per sensor to
+     * avoid N+1 round-trips when many sensors are registered.
+     *
      * @param  string                             $sessionId  Session ID string.
      * @param  list<array{colname: string, colcomment: string}> $columns   Output of findPlottable().
      * @return array<string, bool>  sensor_key → true if empty, false if has data.
@@ -63,24 +66,30 @@ class ColumnRepository
      */
     public function findEmpty(string $sessionId, array $columns): array
     {
+        if (empty($columns)) {
+            return [];
+        }
+
+        // One query: count distinct values per sensor for the session.
+        $stmt = $this->pdo->prepare(
+            "SELECT sensor_key, COUNT(DISTINCT value) AS cnt
+             FROM sensor_readings
+             WHERE session_id = :sid
+             GROUP BY sensor_key"
+        );
+        $stmt->execute([':sid' => $sessionId]);
+
+        // Build a lookup: sensor_key → distinct-value count.
+        $counts = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $counts[$row['sensor_key']] = (int) $row['cnt'];
+        }
+
+        // Any sensor not present in the result has 0 readings → empty.
         $result = [];
-
         foreach ($columns as $col) {
-            $sensorKey = $col['colname'];
-
-            // Check how many distinct values this sensor has for this session
-            $stmt = $this->pdo->prepare(
-                "SELECT COUNT(DISTINCT value) < 2 AS is_empty
-                 FROM sensor_readings
-                 WHERE session_id = :sid AND sensor_key = :sensor_key"
-            );
-            $stmt->execute([
-                ':sid'        => $sessionId,
-                ':sensor_key' => $sensorKey
-            ]);
-            $row = $stmt->fetch();
-
-            $result[$sensorKey] = (bool) $row['is_empty'];
+            $key = $col['colname'];
+            $result[$key] = ($counts[$key] ?? 0) < 2;
         }
 
         return $result;
