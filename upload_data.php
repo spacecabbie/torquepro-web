@@ -180,8 +180,16 @@ try {
     $sensorCount    = 0;
     $newSensorCount = 0;
 
-    // GPS sensor keys as defined by the Torque Pro PID registry.
-    // These are flagged is_gps=1 when first registered in the sensors table.
+    // GPS sensor keys (Torque Pro app built-in namespace — kff* prefix).
+    //
+    // IMPORTANT: These are NOT car-specific OBD PIDs. The kff* prefix is Torque
+    // Pro's own internal namespace for app-calculated and device-sensor values.
+    // kff1006 is ALWAYS GPS Latitude, kff1005 is ALWAYS GPS Longitude, etc.,
+    // regardless of what car or OBD profile is in use. Torque never sends
+    // userShortName for these because they are fixed app constants.
+    //
+    // By contrast, k222408 / kd / kf etc. (no ff) ARE car/profile-specific OBD
+    // PIDs whose names come from userShortName*/userFullName* in each upload.
     $gpsSensorKeys = [
         'kff1001', // GPS Speed (km/h)
         'kff1005', // GPS Longitude
@@ -231,10 +239,13 @@ try {
 
         $floatValue = (float)$value;
 
-        // Capture GPS-specific keys for the dedicated gps_points columns.
-        // kff1005 = Longitude, kff1006 = Latitude
+        // Extract GPS component values into dedicated gps_points typed columns.
+        // These keys are Torque Pro app constants (kff* namespace) — they are
+        // identical on every car/device. They are NOT OBD PIDs from the ECU.
+        // The gps_points table provides purpose-built typed columns for these
+        // values, so we must identify them by their fixed Torque-defined keys.
+        // kff1006 = Latitude, kff1005 = Longitude, kff1001 = GPS Speed (km/h)
         // kff1009/kff1010 = Altitude (version-dependent, kff1010 preferred)
-        // kff1001 = GPS Speed (km/h)
         // These override any lat=/lon= values from a trip-start notice.
         switch ($key) {
             case 'kff1006':
