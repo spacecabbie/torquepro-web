@@ -137,7 +137,7 @@ if (count($_GET) > 0) {
         // Build placeholders that match the :p_<key> names above.
         $placeholders = implode(', ', array_keys($params));
         $columns      = implode(', ', $keys);
-        $sql          = "INSERT INTO `" . DB_TABLE . "` ({$columns}) VALUES ({$placeholders})";
+        $sql          = "INSERT IGNORE INTO `" . DB_TABLE . "` ({$columns}) VALUES ({$placeholders})";
         $stmt         = $pdo->prepare($sql);
         $stmt->execute($params);
         $sensor_count = count($params);
