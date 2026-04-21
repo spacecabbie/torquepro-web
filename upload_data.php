@@ -73,9 +73,9 @@ try {
             continue;
         }
         if (preg_match('/^userShortName(.+)$/', $rawKey, $m)) {
-            $sensorNames['k' . $m[1]] = $value;
+            $sensorNames['k' . ltrim($m[1], '0')] = $value;
         } elseif (preg_match('/^userFullName(.+)$/', $rawKey, $m)) {
-            $sensorDescriptions['k' . $m[1]] = $value;
+            $sensorDescriptions['k' . ltrim($m[1], '0')] = $value;
         }
     }
 
