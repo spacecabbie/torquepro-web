@@ -35,7 +35,7 @@ history. Key decisions recorded below.
 | 7 | Dashboard: Wire uPlot per panel + sync cursors | ✅ Done | feat: step 7 |
 | 8 | Dashboard: Full paginated data summary table | ✅ Done | feat: steps 5+6 |
 | 9 | Map: Refactor to lazy modal | ✅ Done | feat: steps 5+6 |
-| 10 | Saved dashboards: Save button + slug resolver | ⬜ Not started | — |
+| 10 | Saved dashboards: Save button + slug resolver | ✅ Done | feat: step 10 |
 
 ---
 
