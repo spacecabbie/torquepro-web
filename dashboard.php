@@ -461,6 +461,29 @@ body {
 }
 #exportModal .modal-header { border-bottom: 1px solid var(--dwb-border); }
 
+/* ── Save modal ────────────────────────────────────────────── */
+#saveModal .modal-content {
+    background: var(--dwb-surface);
+    border: 1px solid var(--dwb-border);
+}
+#saveModal .modal-header { border-bottom: 1px solid var(--dwb-border); }
+#saveModal .form-label { font-size: 12px; color: var(--dwb-muted); }
+#saveModal .form-control, #saveModal .form-control:focus {
+    background: #111128;
+    border-color: var(--dwb-border);
+    color: var(--dwb-text);
+    box-shadow: none;
+}
+#save-result-box {
+    background: rgba(78,154,241,.1);
+    border: 1px solid var(--dwb-accent);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 12px;
+    word-break: break-all;
+}
+#save-result-box a { color: var(--dwb-accent); }
+
 /* ── Utilities ─────────────────────────────────────────── */
 .text-muted-dwb { color: var(--dwb-muted) !important; }
 </style>
@@ -505,6 +528,11 @@ body {
         <?php endif; ?>
 
         <?php if ($hasSession): ?>
+        <button class="btn btn-sm btn-outline-warning"
+                data-bs-toggle="modal" data-bs-target="#saveModal"
+                title="Save this dashboard layout">
+            ⭐ Save
+        </button>
         <a href="export.php?id=<?= urlencode($session_id) ?>&format=csv"
            class="btn btn-sm btn-outline-secondary">
             ⬇ CSV
@@ -684,6 +712,56 @@ body {
             </div>
             <div class="modal-body">
                 <div id="map"></div>
+            </div>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
+<!-- ═══════════════════════════════════════════════════════ SAVE MODAL -->
+<?php if ($hasSession): ?>
+<div class="modal fade" id="saveModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content" id="saveModal">
+            <div class="modal-header">
+                <h5 class="modal-title">⭐ Save dashboard</h5>
+                <button type="button" class="btn-close btn-close-white"
+                        data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label" for="save-title">Title (optional)</label>
+                    <input type="text" class="form-control form-control-sm"
+                           id="save-title" maxlength="120"
+                           placeholder="e.g. Cold start — 22 Apr 2026">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="save-slug">
+                        Custom slug (optional)
+                        <span class="text-muted-dwb">— letters, digits, hyphens, 3–80 chars</span>
+                    </label>
+                    <input type="text" class="form-control form-control-sm"
+                           id="save-slug" maxlength="80"
+                           placeholder="auto-generated if left blank">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="save-device-id">
+                        Device ID
+                        <span class="text-muted-dwb">— needed to update or delete this save later</span>
+                    </label>
+                    <input type="password" class="form-control form-control-sm"
+                           id="save-device-id" maxlength="255"
+                           placeholder="Torque device ID (optional)">
+                </div>
+                <div id="save-result-box" style="display:none;"></div>
+                <div id="save-error" class="text-danger mt-2" style="display:none;font-size:12px;"></div>
+            </div>
+            <div class="modal-footer" style="border-top:1px solid var(--dwb-border);">
+                <button type="button" class="btn btn-secondary btn-sm"
+                        data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning btn-sm" id="btn-save-dashboard">
+                    Save &amp; get link
+                </button>
             </div>
         </div>
     </div>
@@ -1105,6 +1183,86 @@ function initLeaflet() {
         initAllPanels();
     }
 })();
+
+/* ── Save dashboard ─────────────────────────────────────────────────────── */
+<?php if ($hasSession): ?>
+(function () {
+    'use strict';
+
+    const btn       = document.getElementById('btn-save-dashboard');
+    const resultBox = document.getElementById('save-result-box');
+    const errBox    = document.getElementById('save-error');
+
+    if (!btn) return;
+
+    btn.addEventListener('click', async () => {
+        resultBox.style.display = 'none';
+        errBox.style.display    = 'none';
+        btn.disabled            = true;
+        btn.textContent         = 'Saving…';
+
+        // Build state object from current URL / JS constants.
+        const state = {
+            id:   SESSION_ID,
+            grid: GRID_PARAM,
+            p:    PANELS_INIT,
+        };
+
+        const payload = {
+            state,
+            title:     document.getElementById('save-title')?.value.trim()     || '',
+            slug:      document.getElementById('save-slug')?.value.trim()      || '',
+            device_id: document.getElementById('save-device-id')?.value.trim() || '',
+        };
+
+        try {
+            const resp = await fetch('api/dashboard_save.php', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(payload),
+            });
+
+            const json = await resp.json();
+
+            if (!resp.ok) {
+                throw new Error(json.error ?? `HTTP ${resp.status}`);
+            }
+
+            // Build an absolute shareable URL from the returned relative path.
+            const abs = new URL(json.url, window.location.origin).toString();
+
+            resultBox.innerHTML =
+                `✅ Dashboard saved!<br>
+                 <strong>Slug:</strong> <code>${json.slug}</code><br>
+                 <strong>Link:</strong> <a href="${abs}" target="_blank">${abs}</a>
+                 <button type="button" style="margin-left:8px;font-size:11px;
+                         padding:1px 6px;border-radius:4px;border:1px solid #4e9af1;
+                         background:transparent;color:#4e9af1;cursor:pointer;"
+                         onclick="navigator.clipboard.writeText('${abs}')
+                                  .then(()=>this.textContent='Copied!')
+                                  .catch(()=>{})">
+                     Copy
+                 </button>`;
+            resultBox.style.display = 'block';
+        } catch (e) {
+            errBox.textContent    = e.message || 'Unknown error.';
+            errBox.style.display  = 'block';
+        } finally {
+            btn.disabled    = false;
+            btn.textContent = 'Save & get link';
+        }
+    });
+
+    // Reset form each time the modal opens.
+    document.getElementById('saveModal')?.addEventListener('show.bs.modal', () => {
+        resultBox.style.display  = 'none';
+        errBox.style.display     = 'none';
+        document.getElementById('save-title').value     = '';
+        document.getElementById('save-slug').value      = '';
+        document.getElementById('save-device-id').value = '';
+    });
+})();
+<?php endif; ?>
 
 /* ── Timezone detection ─────────────────────────────────────────────────── */
 <?php if ($timezone === ''): ?>
