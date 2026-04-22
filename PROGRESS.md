@@ -30,11 +30,11 @@ history. Key decisions recorded below.
 | 2 | Backend: `api/sensor.php` AJAX endpoint | ✅ Done | feat: step 2 |
 | 3 | Backend: `SummaryRepository.php` all-sensor stats | ✅ Done | feat: step 3 |
 | 4 | Frontend: Download uPlot, remove Flot references | ✅ Done | feat: step 4 |
-| 5 | Dashboard: Top bar replaces sidebar | 🔄 In progress | — |
-| 6 | Dashboard: CSS Grid panel shell + URL state | ⬜ Not started | — |
+| 5 | Dashboard: Top bar replaces sidebar | ✅ Done | feat: steps 5+6 |
+| 6 | Dashboard: CSS Grid panel shell + URL state | ✅ Done | feat: steps 5+6 |
 | 7 | Dashboard: Wire uPlot per panel + sync cursors | ⬜ Not started | — |
-| 8 | Dashboard: Full paginated data summary table | ⬜ Not started | — |
-| 9 | Map: Refactor to lazy modal | ⬜ Not started | — |
+| 8 | Dashboard: Full paginated data summary table | ✅ Done | feat: steps 5+6 |
+| 9 | Map: Refactor to lazy modal | ✅ Done | feat: steps 5+6 |
 | 10 | Saved dashboards: Save button + slug resolver | ⬜ Not started | — |
 
 ---
