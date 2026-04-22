@@ -27,8 +27,8 @@ history. Key decisions recorded below.
 | # | Description | Status | Commit |
 |---|-------------|--------|--------|
 | 1 | DB: `saved_dashboards` table migration | ✅ Done | feat: step 1 |
-| 2 | Backend: `api/sensor.php` AJAX endpoint | 🔄 In progress | — |
-| 3 | Backend: `SummaryRepository.php` all-sensor stats | ⬜ Not started | — |
+| 2 | Backend: `api/sensor.php` AJAX endpoint | ✅ Done | feat: step 2 |
+| 3 | Backend: `SummaryRepository.php` all-sensor stats | 🔄 In progress | — |
 | 4 | Frontend: Download uPlot, remove Flot references | ⬜ Not started | — |
 | 5 | Dashboard: Top bar replaces sidebar | ⬜ Not started | — |
 | 6 | Dashboard: CSS Grid panel shell + URL state | ⬜ Not started | — |
