@@ -328,8 +328,9 @@ body {
     align-items: center;
     justify-content: center;
     position: relative;
-    min-height: 0;
+    min-height: 180px;
     padding: 8px;
+    overflow: hidden;
 }
 
 .panel-empty {
@@ -343,7 +344,16 @@ body {
     width: 100%;
     height: 100%;
     min-height: 160px;
+    overflow: hidden;
 }
+
+/* uPlot overrides — blend into dark theme */
+.u-wrap { background: transparent !important; }
+.u-title { display: none; }
+.u-cursor-x, .u-cursor-y { border-color: rgba(255,255,255,0.25) !important; }
+.u-cursor-pt { border-radius: 50%; }
+.u-legend { color: #8b97a8; font-size: 11px; }
+
 
 /* Panel spinner */
 .panel-spinner {
@@ -943,6 +953,158 @@ function initLeaflet() {
     leafletMap.fitBounds(poly.getBounds(), { padding: [20, 20] });
 }
 <?php endif; ?>
+
+/* ── uPlot panel charts — Step 7 ───────────────────────────────────────── */
+(function () {
+    'use strict';
+
+    if (!SESSION_ID) return;          // no session → nothing to chart
+
+    /* Shared cursor-sync so all visible panels cross-hair together */
+    const cursorSync = uPlot.sync('dwb');
+
+    /* uPlot colour palette */
+    const LINE_COLOR   = '#4e9af1';
+    const FILL_COLOR   = 'rgba(78,154,241,0.08)';
+    const GRID_COLOR   = 'rgba(255,255,255,0.06)';
+    const TICK_COLOR   = 'rgba(255,255,255,0.20)';
+    const LABEL_COLOR  = '#8b97a8';
+
+    /* Map of panelIdx → uPlot instance (for resize observer) */
+    const charts = new Map();
+
+    /* Build a minimal uPlot opts object for a single-series panel */
+    function buildOpts(label, unit, width, height) {
+        return {
+            title:  '',
+            width:  width,
+            height: height,
+            cursor: {
+                sync: { key: cursorSync.key },
+            },
+            legend: { show: false },
+            scales: {
+                x: { time: true },
+                y: { auto: true },
+            },
+            axes: [
+                {
+                    stroke:   LABEL_COLOR,
+                    grid:     { stroke: GRID_COLOR, width: 1 },
+                    ticks:    { stroke: TICK_COLOR },
+                    values:   (u, vals) => vals.map(v => {
+                        if (v == null) return '';
+                        const d = new Date(v * 1e3);
+                        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    }),
+                },
+                {
+                    stroke:  LABEL_COLOR,
+                    grid:    { stroke: GRID_COLOR, width: 1 },
+                    ticks:   { stroke: TICK_COLOR },
+                    label:   unit || '',
+                    labelSize: 14,
+                },
+            ],
+            series: [
+                {},
+                {
+                    label:  label,
+                    stroke: LINE_COLOR,
+                    fill:   FILL_COLOR,
+                    width:  1.5,
+                    points: { show: false },
+                },
+            ],
+        };
+    }
+
+    /* Convert [{ts_ms, value}] API response to uPlot data arrays */
+    function apiToUplot(pairs) {
+        const xs = new Float64Array(pairs.length);
+        const ys = new Float64Array(pairs.length);
+        for (let i = 0; i < pairs.length; i++) {
+            xs[i] = pairs[i][0] / 1000;   // ms → s (uPlot uses Unix seconds)
+            ys[i] = pairs[i][1];
+        }
+        return [xs, ys];
+    }
+
+    /* Replace the spinner inside a chart-area div with a uPlot instance */
+    function mountChart(container, label, unit, data) {
+        container.innerHTML = '';
+        const w = container.clientWidth  || 400;
+        const h = container.clientHeight || 200;
+        const opts = buildOpts(label, unit, w, h);
+        const u    = new uPlot(opts, data, container);
+        return u;
+    }
+
+    /* Show an error state in a panel */
+    function showError(container, msg) {
+        container.innerHTML =
+            `<div class="panel-empty"><div class="empty-icon">⚠</div><p>${msg}</p></div>`;
+    }
+
+    /* Fetch + render one panel */
+    async function loadPanel(container) {
+        const sid = container.dataset.sid;
+        const key = container.dataset.key;
+        const idx = Number(container.closest('.dwb-panel')?.dataset.panelIdx ?? -1);
+
+        try {
+            const resp = await fetch(`api/sensor.php?sid=${encodeURIComponent(sid)}&key=${encodeURIComponent(key)}`);
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+                showError(container, err.error ?? 'Failed to load');
+                return;
+            }
+            const json = await resp.json();
+            if (!json.data || json.data.length === 0) {
+                showError(container, 'No data');
+                return;
+            }
+            const udata = apiToUplot(json.data);
+            const u     = mountChart(container, json.label, json.unit, udata);
+            if (idx >= 0) charts.set(idx, u);
+        } catch (e) {
+            showError(container, 'Network error');
+        }
+    }
+
+    /* Kick off all panels that have data-key set */
+    function initAllPanels() {
+        document.querySelectorAll('.panel-chart-area[data-key]').forEach(el => {
+            if (el.dataset.key) loadPanel(el);
+        });
+    }
+
+    /* ResizeObserver — redraw each chart when its container changes size */
+    if (typeof ResizeObserver !== 'undefined') {
+        const ro = new ResizeObserver(entries => {
+            for (const entry of entries) {
+                const panel = entry.target.closest('.dwb-panel');
+                if (!panel) continue;
+                const idx = Number(panel.dataset.panelIdx);
+                const u   = charts.get(idx);
+                if (!u) continue;
+                const area = panel.querySelector('.panel-chart-area');
+                if (!area) continue;
+                const w = area.clientWidth  || 400;
+                const h = area.clientHeight || 200;
+                u.setSize({ width: w, height: h });
+            }
+        });
+        document.querySelectorAll('.panel-chart-area').forEach(el => ro.observe(el));
+    }
+
+    /* Run after DOM + scripts ready */
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initAllPanels);
+    } else {
+        initAllPanels();
+    }
+})();
 
 /* ── Timezone detection ─────────────────────────────────────────────────── */
 <?php if ($timezone === ''): ?>
