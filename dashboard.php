@@ -2,12 +2,18 @@
 declare(strict_types=1);
 
 /**
- * dashboard.php — Main UI entry point.
+ * dashboard.php — Automotive Sensor Analysis Workbench.
  *
- * Bootstraps auth, loads data via repository classes, then renders the HTML view.
- * All business logic lives in includes/; this file only wires dependencies together.
+ * Steps 5+6: Top bar replaces sidebar; CSS Grid panel shell with per-panel
+ * sensor selection, colspan/rowspan, and URL-encoded state.
+ * Charts are wired in Step 7. Data summary table uses SummaryRepository.
  *
- * Origin: dashboard.php (updated for OOP migration — Step 4)
+ * State model: everything lives in the URL query string.
+ *   ?id=SESSION_ID
+ *   &grid=RxC           (e.g. 2x3 = 2 rows, 3 cols)
+ *   &p[N][s][]=SENSOR   (panel N, sensor key — array supports future multi-sensor)
+ *   &p[N][cs]=INT       (colspan, default 1)
+ *   &p[N][rs]=INT       (rowspan, default 1)
  */
 
 require_once __DIR__ . '/includes/config.php';
@@ -17,7 +23,7 @@ require_once __DIR__ . '/includes/Helpers/DataHelper.php';
 require_once __DIR__ . '/includes/Data/SessionRepository.php';
 require_once __DIR__ . '/includes/Data/ColumnRepository.php';
 require_once __DIR__ . '/includes/Data/GpsRepository.php';
-require_once __DIR__ . '/includes/Data/PlotRepository.php';
+require_once __DIR__ . '/includes/Data/SummaryRepository.php';
 require_once __DIR__ . '/includes/Session/SessionManager.php';
 
 use TorqueLogs\Auth\Auth;
@@ -25,7 +31,7 @@ use TorqueLogs\Database\Connection;
 use TorqueLogs\Data\SessionRepository;
 use TorqueLogs\Data\ColumnRepository;
 use TorqueLogs\Data\GpsRepository;
-use TorqueLogs\Data\PlotRepository;
+use TorqueLogs\Data\SummaryRepository;
 use TorqueLogs\Session\SessionManager;
 
 // ── Inline endpoint: set timezone preference ────────────────────────────────
@@ -40,9 +46,7 @@ if (isset($_GET['settz'])) {
 // ── Auth guard ──────────────────────────────────────────────────────────────
 Auth::checkBrowser();
 
-$pdo = Connection::get();
-
-// ── Timezone from session ──────────────────────────────────────────────────
+$pdo      = Connection::get();
 $timezone = $_SESSION['time'] ?? '';
 
 // ── Session list ───────────────────────────────────────────────────────────
@@ -61,8 +65,7 @@ if (isset($_POST['id'])) {
 }
 $hasSession = $session_id !== '';
 
-// ── Delete action  (origin: del_session.php) ───────────────────────────────
-// Forms pass the session ID as a POST hidden input.
+// ── Delete action ──────────────────────────────────────────────────────────
 $manager  = new SessionManager($pdo);
 $deleteId = '';
 if (isset($_POST['deletesession'])) {
@@ -78,15 +81,11 @@ if ($deleteId !== '') {
     $hasSession  = false;
 }
 
-// ── Merge action  (origin: merge_sessions.php) ─────────────────────────────
+// ── Merge action ───────────────────────────────────────────────────────────
 $mergeId     = '';
 $mergeWithId = '';
-if (isset($_POST['mergesession'])) {
-    $mergeId = preg_replace('/\D/', '', $_POST['mergesession']) ?? '';
-}
-if (isset($_POST['mergesessionwith'])) {
-    $mergeWithId = preg_replace('/\D/', '', $_POST['mergesessionwith']) ?? '';
-}
+if (isset($_POST['mergesession']))     { $mergeId     = preg_replace('/\D/', '', $_POST['mergesession'])     ?? ''; }
+if (isset($_POST['mergesessionwith'])) { $mergeWithId = preg_replace('/\D/', '', $_POST['mergesessionwith']) ?? ''; }
 if ($mergeId !== '' && $mergeWithId !== '') {
     $mergedId = $manager->merge($mergeId, $mergeWithId, $sids);
     if ($mergedId !== null) {
@@ -99,540 +98,861 @@ if ($mergeId !== '' && $mergeWithId !== '') {
     }
 }
 
-// ── Column metadata ────────────────────────────────────────────────────────
-$colRepo      = new ColumnRepository($pdo);
-$coldata      = $colRepo->findPlottable();
-$coldataempty = $hasSession ? $colRepo->findEmpty($session_id, $coldata) : [];
+// ── Column / sensor metadata ───────────────────────────────────────────────
+$colRepo = new ColumnRepository($pdo);
+$coldata = $colRepo->findPlottable();
 
 // ── GPS track ──────────────────────────────────────────────────────────────
 $gpsRepo = new GpsRepository($pdo);
 $gpsData = $hasSession
     ? $gpsRepo->findTrack($session_id)
     : ['points' => [], 'mapdata' => GpsRepository::DEFAULT_MAP_DATA];
-
 $geolocs  = $gpsData['points'];
 $imapdata = $gpsData['mapdata'];
 
-// ── Chart data + statistics ────────────────────────────────────────────────
-$plotRepo = new PlotRepository($pdo);
-$plotData = $hasSession
-    ? $plotRepo->load(
-        $session_id,
-        $sids,
-        $coldata,
-        $_GET['s1'] ?? null,
-        $_GET['s2'] ?? null
-    )
-    : null;
+// ── Grid config from URL ───────────────────────────────────────────────────
+$gridParam = $_GET['grid'] ?? '2x3';
+if (!preg_match('/^([1-6])x([1-6])$/', $gridParam, $gm)) {
+    $gridParam = '2x3';
+    $gm        = [null, '2', '3'];
+}
+$gridRows = (int) $gm[1];
+$gridCols = (int) $gm[2];
 
-$hasPlotData = ($plotData !== null && !($plotData['no_data'] ?? false));
-
-// Flatten plot variables for the view (preserving original variable names).
-$v1          = $plotData['v1']        ?? 'kd';
-$v2          = $plotData['v2']        ?? 'kf';
-$v1_label    = $plotData['v1Label']   ?? '"Variable 1"';
-$v2_label    = $plotData['v2Label']   ?? '"Variable 2"';
-$d1          = $plotData['d1']        ?? [];
-$d2          = $plotData['d2']        ?? [];
-$sparkdata1  = $plotData['sparkdata1'] ?? '';
-$sparkdata2  = $plotData['sparkdata2'] ?? '';
-$avg1        = $plotData['avg1']       ?? 0;
-$avg2        = $plotData['avg2']       ?? 0;
-$min1        = $plotData['min1']       ?? 0;
-$min2        = $plotData['min2']       ?? 0;
-$max1        = $plotData['max1']       ?? 0;
-$max2        = $plotData['max2']       ?? 0;
-$pcnt25data1 = $plotData['pcnt25_1']  ?? 0;
-$pcnt25data2 = $plotData['pcnt25_2']  ?? 0;
-$pcnt75data1 = $plotData['pcnt75_1']  ?? 0;
-$pcnt75data2 = $plotData['pcnt75_2']  ?? 0;
-
-// ── Merge helper: find adjacent (younger) session ──────────────────────────
-$session_id_next = false;
-if ($hasSession) {
-    $idx = array_search($session_id, $sids, true);
-    $session_id_next = ($idx !== false && $idx > 0) ? $sids[$idx - 1] : false;
+// ── Panel config from URL ──────────────────────────────────────────────────
+$panelsRaw  = (isset($_GET['p']) && is_array($_GET['p'])) ? $_GET['p'] : [];
+$panelCount = $gridRows * $gridCols;
+$panels     = [];
+for ($i = 0; $i < $panelCount; $i++) {
+    $raw     = (isset($panelsRaw[$i]) && is_array($panelsRaw[$i])) ? $panelsRaw[$i] : [];
+    $rawKeys = (isset($raw['s']) && is_array($raw['s'])) ? array_map('strval', $raw['s']) : [];
+    $keys    = array_values(array_filter(
+        $rawKeys,
+        static fn(string $k): bool => (bool) preg_match('/^[a-zA-Z0-9_]{1,40}$/', $k)
+    ));
+    $cs = max(1, min($gridCols, (int) ($raw['cs'] ?? 1)));
+    $rs = max(1, min($gridRows, (int) ($raw['rs'] ?? 1)));
+    $panels[] = [
+        'sensor'  => $keys[0] ?? '',
+        'sensors' => $keys,
+        'cs'      => $cs,
+        'rs'      => $rs,
+    ];
 }
 
-// ── Session label for the page header ──────────────────────────────────────
+// ── Summary data ───────────────────────────────────────────────────────────
+$summaryRepo = new SummaryRepository($pdo);
+$summaryRows = $hasSession ? $summaryRepo->findForSession($session_id) : [];
+
+// ── Merge helper ───────────────────────────────────────────────────────────
+$session_id_next = false;
+if ($hasSession) {
+    $sidx            = array_search($session_id, $sids, true);
+    $session_id_next = ($sidx !== false && $sidx > 0) ? $sids[$sidx - 1] : false;
+}
+
+// ── Session label ──────────────────────────────────────────────────────────
 $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
     ? $seshdates[$session_id]
-    : 'No session selected';
+    : null;
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="dark">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Torque Dashboard</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Torque Logs — Workbench</title>
+<link rel="stylesheet" href="static/css/bootstrap.min.css">
+<link rel="stylesheet" href="static/css/chosen.min.css">
+<link rel="stylesheet" href="static/css/uplot.min.css">
+<style>
+/* ── Colour tokens ─────────────────────────────────────── */
+:root {
+    --dwb-bg:      #0d0d1a;
+    --dwb-surface: #1a1a2e;
+    --dwb-border:  #2e2e4a;
+    --dwb-accent:  #4e9af1;
+    --dwb-text:    #c9d1d9;
+    --dwb-muted:   #6e7681;
+    --dwb-danger:  #f85149;
+}
 
-    <!-- Bootstrap 5 -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/5.3.8/css/bootstrap.min.css" integrity="sha512-2bBQCjcnw658Lho4nlXJcc6WkV/UxpE/sAokbXPxQNGqmNdQrWqtw26Ns9kFF/yG792pKR1Sx8/Y1Lf1XN4GKA==" crossorigin="anonymous" referrerpolicy="no-referrer">
-    <!-- Leaflet -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" integrity="sha512-h9FcoyWjHcOcmEVkxOfTLnmZFWIH0iZhZT1H2TbOq55xssQGEJHEaIm+PgoUaZbRvQTNTluNOEfb1ZRy6D3BOw==" crossorigin="anonymous" referrerpolicy="no-referrer">
-    <!-- Chosen -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chosen/1.8.7/chosen.min.css" integrity="sha512-yVvxUQV0QESBt1SyZbNJMAwyKvFTLMyXSyBHDO4BG5t7k/Lw34tyqlSDlKIrIENIzCl+RVUNjmCPG+V/GMesRw==" crossorigin="anonymous" referrerpolicy="no-referrer">
-    <!-- Google Font -->
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+/* ── Reset / base ──────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    font-size: 13px;
+    background: var(--dwb-bg);
+    color: var(--dwb-text);
+    overflow-x: hidden;
+}
 
-    <style>
-        :root {
-            --sidebar-width: 260px;
-            --navbar-h: 54px;
-        }
-        body {
-            font-family: 'Inter', sans-serif;
-            background: #f0f2f5;
-            color: #212529;
-        }
+/* ── Top bar ───────────────────────────────────────────── */
+#dwb-topbar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 48px;
+    background: var(--dwb-surface);
+    border-bottom: 1px solid var(--dwb-border);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    gap: 10px;
+    z-index: 1040;
+}
 
-        /* ── Navbar ── */
-        .navbar { height: var(--navbar-h); background: #1a1a2e !important; }
-        .navbar-brand { font-weight: 600; letter-spacing: .03em; }
-        .navbar-brand span { color: #e94560; }
+#dwb-topbar .brand {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--dwb-accent);
+    white-space: nowrap;
+    letter-spacing: .5px;
+}
 
-        /* ── Sidebar ── */
-        #sidebar {
-            position: fixed;
-            top: var(--navbar-h);
-            left: 0;
-            width: var(--sidebar-width);
-            height: calc(100vh - var(--navbar-h));
-            background: #fff;
-            border-right: 1px solid #dee2e6;
-            overflow-y: auto;
-            padding: 1.25rem 1rem;
-            z-index: 100;
-        }
-        #sidebar .section-title {
-            font-size: .7rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: .08em;
-            color: #6c757d;
-            margin: 1.2rem 0 .4rem;
-        }
-        #sidebar .nav-link {
-            color: #343a40;
-            padding: .35rem .5rem;
-            border-radius: 6px;
-            font-size: .875rem;
-        }
-        #sidebar .nav-link:hover { background: #f0f2f5; }
-        #sidebar .nav-link.active { background: #e8eaf6; color: #3949ab; font-weight: 600; }
+/* Session picker (Chosen) */
+#dwb-topbar .session-wrap {
+    flex: 0 0 260px;
+    position: relative;
+}
+#dwb-topbar .chosen-container { width: 100% !important; }
+#dwb-topbar .chosen-single {
+    background: #111128 !important;
+    border: 1px solid var(--dwb-border) !important;
+    color: var(--dwb-text) !important;
+    border-radius: 6px;
+    height: 30px !important;
+    line-height: 30px !important;
+    padding: 0 8px !important;
+    box-shadow: none !important;
+}
+#dwb-topbar .chosen-drop {
+    background: #111128;
+    border: 1px solid var(--dwb-border);
+    border-top: none;
+    color: var(--dwb-text);
+    box-shadow: 0 4px 12px rgba(0,0,0,.6);
+}
+#dwb-topbar .chosen-results li { color: var(--dwb-text); }
+#dwb-topbar .chosen-results li.highlighted { background: var(--dwb-accent); color: #fff; }
 
-        /* ── Main ── */
-        #main {
-            margin-left: var(--sidebar-width);
-            padding: calc(var(--navbar-h) + 1.5rem) 1.5rem 2rem;
-            min-height: 100vh;
-        }
+/* Grid preset pills */
+#grid-presets { display: flex; gap: 4px; flex-shrink: 0; }
+.grid-pill {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    border: 1px solid var(--dwb-border);
+    background: transparent;
+    color: var(--dwb-muted);
+    cursor: pointer;
+    transition: background .15s, color .15s;
+    white-space: nowrap;
+}
+.grid-pill:hover, .grid-pill.active {
+    background: var(--dwb-accent);
+    border-color: var(--dwb-accent);
+    color: #fff;
+}
 
-        /* ── Cards ── */
-        .card { border: none; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
-        .card-header {
-            background: transparent;
-            border-bottom: 1px solid #f0f0f0;
-            font-weight: 600;
-            font-size: .875rem;
-            padding: .75rem 1rem;
-        }
-        .card-body { padding: 1rem; }
+/* Right side actions */
+#dwb-topbar .topbar-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
 
-        /* ── Stat cards ── */
-        .stat-card { border-radius: 10px; padding: .9rem 1rem; color: #fff; height: 100%; }
-        .stat-card .stat-label { font-size: .72rem; opacity: .85; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; }
-        .stat-card .stat-value { font-size: 1.5rem; font-weight: 700; line-height: 1.2; }
-        .stat-card .stat-sub   { font-size: .78rem; opacity: .8; }
-        .bg-speed   { background: linear-gradient(135deg, #1a73e8, #0d47a1); }
-        .bg-temp    { background: linear-gradient(135deg, #e94560, #b71c1c); }
-        .bg-session { background: linear-gradient(135deg, #0f9d58, #1b5e20); }
-        .bg-gps     { background: linear-gradient(135deg, #f4b400, #e65100); }
+/* ── Main canvas ───────────────────────────────────────── */
+#dwb-canvas {
+    margin-top: 48px;
+    padding: 12px;
+}
 
-        /* ── Map ── */
-        #map-canvas { height: 300px; border-radius: 8px; }
+/* ── Panel grid ────────────────────────────────────────── */
+#panel-grid {
+    display: grid;
+    grid-template-columns: repeat(var(--grid-cols, 3), 1fr);
+    gap: 10px;
+}
 
-        /* ── Chart ── */
-        #placeholder { height: 280px; }
+.dwb-panel {
+    background: var(--dwb-surface);
+    border: 1px solid var(--dwb-border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    min-height: 220px;
+    overflow: hidden;
+}
 
-        /* ── Sparkline ── */
-        span.line { font-size: .01px; }
+.panel-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--dwb-border);
+    background: rgba(0,0,0,.15);
+    flex-shrink: 0;
+}
 
-        /* ── Variable selector ── */
-        .chosen-container { width: 100% !important; }
+.panel-sensor-select {
+    flex: 1;
+    font-size: 12px;
+    background: transparent;
+    border: none;
+    color: var(--dwb-text);
+    cursor: pointer;
+    outline: none;
+    min-width: 0;
+}
+.panel-sensor-select option { background: #1a1a2e; }
 
-        /* ── Responsive ── */
-        @media (max-width: 767px) {
-            #sidebar { display: none; }
-            #main    { margin-left: 0; }
-        }
-    </style>
+.panel-menu-btn {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: var(--dwb-muted);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 2px;
+    border-radius: 4px;
+}
+.panel-menu-btn:hover { color: var(--dwb-text); background: rgba(255,255,255,.07); }
+
+.panel-body {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    min-height: 0;
+    padding: 8px;
+}
+
+.panel-empty {
+    text-align: center;
+    color: var(--dwb-muted);
+}
+.panel-empty .empty-icon { font-size: 28px; margin-bottom: 6px; }
+.panel-empty p { font-size: 11px; margin: 0; }
+
+.panel-chart-area {
+    width: 100%;
+    height: 100%;
+    min-height: 160px;
+}
+
+/* Panel spinner */
+.panel-spinner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    color: var(--dwb-muted);
+    font-size: 11px;
+}
+
+/* ── Summary table section ─────────────────────────────── */
+#summary-section {
+    margin-top: 14px;
+}
+#summary-section h6 {
+    font-size: 12px;
+    color: var(--dwb-muted);
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    margin-bottom: 8px;
+}
+#summary-table-wrap {
+    overflow-x: auto;
+}
+#summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+#summary-table th, #summary-table td {
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--dwb-border);
+    white-space: nowrap;
+}
+#summary-table th {
+    color: var(--dwb-muted);
+    font-weight: 500;
+    text-align: left;
+    background: rgba(0,0,0,.2);
+}
+#summary-table tr:hover td { background: rgba(255,255,255,.03); }
+#summary-table td:nth-child(n+3) { text-align: right; font-variant-numeric: tabular-nums; }
+.spark-cell canvas { vertical-align: middle; }
+
+/* Add-to-panel button */
+.btn-add-panel {
+    padding: 1px 6px;
+    font-size: 11px;
+    border-radius: 4px;
+    border: 1px solid var(--dwb-border);
+    background: transparent;
+    color: var(--dwb-muted);
+    cursor: pointer;
+    transition: background .15s, color .15s;
+}
+.btn-add-panel:hover {
+    background: var(--dwb-accent);
+    border-color: var(--dwb-accent);
+    color: #fff;
+}
+
+/* Summary pagination */
+#summary-pagination {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--dwb-muted);
+}
+#summary-pagination button {
+    background: var(--dwb-surface);
+    border: 1px solid var(--dwb-border);
+    color: var(--dwb-text);
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-size: 12px;
+}
+#summary-pagination button:disabled { opacity: .35; cursor: default; }
+
+/* ── Map modal ─────────────────────────────────────────── */
+#mapModal .modal-content {
+    background: var(--dwb-surface);
+    border: 1px solid var(--dwb-border);
+}
+#mapModal .modal-header {
+    border-bottom: 1px solid var(--dwb-border);
+}
+#map { height: 420px; background: #111; border-radius: 4px; }
+
+/* ── Session actions modal ─────────────────────────────── */
+#actionsModal .modal-content {
+    background: var(--dwb-surface);
+    border: 1px solid var(--dwb-border);
+}
+#actionsModal .modal-header { border-bottom: 1px solid var(--dwb-border); }
+#actionsModal .form-label { font-size: 12px; color: var(--dwb-muted); }
+
+/* ── Export modal ──────────────────────────────────────── */
+#exportModal .modal-content {
+    background: var(--dwb-surface);
+    border: 1px solid var(--dwb-border);
+}
+#exportModal .modal-header { border-bottom: 1px solid var(--dwb-border); }
+
+/* ── Utilities ─────────────────────────────────────────── */
+.text-muted-dwb { color: var(--dwb-muted) !important; }
+</style>
 </head>
 <body>
 
-<!-- ═══════════════════════════════════ NAVBAR ═══════════════════════════════ -->
-<nav class="navbar navbar-dark fixed-top px-3 d-flex align-items-center justify-content-between">
-    <a class="navbar-brand mb-0 h1" href="dashboard.php">
-        <span>Torque</span> Dashboard
-    </a>
-    <div class="d-flex gap-2">
-        <a href="live_log.php" class="btn btn-sm btn-outline-light">⚡ Live Monitor</a>
+<!-- ═══════════════════════════════════════════════════════════════ TOP BAR -->
+<nav id="dwb-topbar">
+    <span class="brand">⚙ Torque Logs</span>
+
+    <!-- Session picker -->
+    <div class="session-wrap">
+        <select id="session-picker" name="id" data-placeholder="— Choose a session —">
+            <option value=""></option>
+            <?php foreach ($sids as $sid): ?>
+            <option value="<?= htmlspecialchars($sid, ENT_QUOTES) ?>"
+                <?= ($sid === $session_id) ? 'selected' : '' ?>>
+                <?= htmlspecialchars($seshdates[$sid] ?? $sid, ENT_QUOTES) ?>
+                &nbsp;(<?= htmlspecialchars($seshsizes[$sid] ?? '', ENT_QUOTES) ?>)
+            </option>
+            <?php endforeach; ?>
+        </select>
+    </div>
+
+    <!-- Grid presets -->
+    <div id="grid-presets">
+        <?php foreach (['1x1','2x2','2x3','3x3','3x4'] as $preset): ?>
+        <button class="grid-pill <?= ($gridParam === $preset) ? 'active' : '' ?>"
+                data-preset="<?= $preset ?>">
+            <?= htmlspecialchars($preset, ENT_QUOTES) ?>
+        </button>
+        <?php endforeach; ?>
+    </div>
+
+    <!-- Right actions -->
+    <div class="topbar-right">
+        <?php if ($hasSession && count($geolocs) > 0): ?>
+        <button class="btn btn-sm btn-outline-secondary"
+                data-bs-toggle="modal" data-bs-target="#mapModal">
+            🗺 Map
+        </button>
+        <?php endif; ?>
+
+        <?php if ($hasSession): ?>
+        <a href="export.php?id=<?= urlencode($session_id) ?>&format=csv"
+           class="btn btn-sm btn-outline-secondary">
+            ⬇ CSV
+        </a>
+        <button class="btn btn-sm btn-outline-secondary"
+                data-bs-toggle="modal" data-bs-target="#actionsModal">
+            ⋮
+        </button>
+        <?php endif; ?>
     </div>
 </nav>
 
-<!-- ══════════════════════════════════ SIDEBAR ═══════════════════════════════ -->
-<aside id="sidebar">
+<!-- ════════════════════════════════════════════════════════════ MAIN CANVAS -->
+<div id="dwb-canvas">
 
-    <div class="section-title">Session</div>
-    <form method="post" action="dashboard.php" id="session-form">
-        <select id="seshidtag" name="id" class="chosen-select form-select form-select-sm"
-                onchange="this.form.submit()"
-                data-placeholder="Pick a session…">
-            <option value=""></option>
-            <?php foreach ($seshdates as $dateid => $datestr): ?>
-                <option value="<?php echo $dateid; ?>"
-                    <?php if ($dateid === ($session_id ?? '')) echo 'selected'; ?>>
-                    <?php echo htmlspecialchars($datestr);
-                          if (SHOW_SESSION_LENGTH) echo $seshsizes[$dateid]; ?>
-                </option>
-            <?php endforeach; ?>
-        </select>
-        <noscript><button class="btn btn-primary btn-sm w-100 mt-1" type="submit">Go</button></noscript>
-    </form>
+    <!-- Panel grid -->
+    <div id="panel-grid"
+         style="--grid-cols:<?= $gridCols ?>;"
+         data-grid-cols="<?= $gridCols ?>"
+         data-grid-rows="<?= $gridRows ?>">
 
-    <?php if ($hasSession): ?>
-    <div class="section-title">Actions</div>
-    <div class="d-grid gap-1">
-        <form method="post"
-              action="dashboard.php"
-              id="form-merge">
-            <input type="hidden" name="mergesession" value="<?php echo htmlspecialchars($session_id, ENT_QUOTES, 'UTF-8'); ?>">
-            <input type="hidden" name="mergesessionwith" value="<?php echo htmlspecialchars((string)$session_id_next, ENT_QUOTES, 'UTF-8'); ?>">
-            <button class="btn btn-sm btn-outline-secondary w-100"
-                    type="submit" <?php if (!$session_id_next) echo 'disabled'; ?>>
-                Merge with next
-            </button>
-        </form>
-        <form method="post" action="dashboard.php"
-              id="form-delete">
-            <input type="hidden" name="deletesession" value="<?php echo htmlspecialchars($session_id, ENT_QUOTES, 'UTF-8'); ?>">
-            <button class="btn btn-sm btn-outline-danger w-100" type="submit">
-                Delete session
-            </button>
-        </form>
+        <?php for ($i = 0; $i < $panelCount; $i++):
+            $p          = $panels[$i];
+            $sensorKey  = $p['sensor'];
+            $cs         = $p['cs'];
+            $rs         = $p['rs'];
+            $hasPlot    = ($hasSession && $sensorKey !== '');
+            $colStyle   = ($cs > 1) ? "grid-column:span {$cs};" : '';
+            $rowStyle   = ($rs > 1) ? "grid-row:span {$rs};"    : '';
+        ?>
+        <div class="dwb-panel" id="panel-<?= $i ?>"
+             style="<?= $colStyle . $rowStyle ?>"
+             data-panel-idx="<?= $i ?>"
+             data-cs="<?= $cs ?>"
+             data-rs="<?= $rs ?>">
+
+            <!-- Panel header -->
+            <div class="panel-header">
+                <select class="panel-sensor-select" data-panel-idx="<?= $i ?>">
+                    <option value="">— sensor —</option>
+                    <?php foreach ($coldata as $col): ?>
+                    <option value="<?= htmlspecialchars($col['key'], ENT_QUOTES) ?>"
+                        <?= ($col['key'] === $sensorKey) ? 'selected' : '' ?>>
+                        <?= htmlspecialchars($col['label'], ENT_QUOTES) ?>
+                        <?php if (!empty($col['unit'])): ?>
+                            (<?= htmlspecialchars($col['unit'], ENT_QUOTES) ?>)
+                        <?php endif; ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+
+                <!-- ⋮ panel menu -->
+                <div class="dropdown">
+                    <button class="panel-menu-btn"
+                            data-bs-toggle="dropdown" aria-expanded="false"
+                            title="Panel options">⋮</button>
+                    <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark"
+                        style="font-size:12px;min-width:160px;">
+                        <li><button class="dropdown-item"
+                                    onclick="DWB.setPanelSpan(<?= $i ?>, 1, 0)">
+                            ⟶ Wider
+                        </button></li>
+                        <li><button class="dropdown-item"
+                                    onclick="DWB.setPanelSpan(<?= $i ?>, -1, 0)">
+                            ⟵ Narrower
+                        </button></li>
+                        <li><button class="dropdown-item"
+                                    onclick="DWB.setPanelSpan(<?= $i ?>, 0, 1)">
+                            ⬇ Taller
+                        </button></li>
+                        <li><button class="dropdown-item"
+                                    onclick="DWB.setPanelSpan(<?= $i ?>, 0, -1)">
+                            ⬆ Shorter
+                        </button></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><button class="dropdown-item text-danger"
+                                    onclick="DWB.clearPanel(<?= $i ?>)">
+                            ✕ Clear panel
+                        </button></li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Panel body -->
+            <div class="panel-body">
+                <?php if (!$hasSession): ?>
+                <div class="panel-empty">
+                    <div class="empty-icon">📂</div>
+                    <p>Select a session</p>
+                </div>
+                <?php elseif ($sensorKey === ''): ?>
+                <div class="panel-empty">
+                    <div class="empty-icon">📊</div>
+                    <p>Choose a sensor above</p>
+                </div>
+                <?php else: ?>
+                <div class="panel-chart-area"
+                     id="chart-<?= $i ?>"
+                     data-sid="<?= htmlspecialchars($session_id, ENT_QUOTES) ?>"
+                     data-key="<?= htmlspecialchars($sensorKey, ENT_QUOTES) ?>">
+                    <div class="panel-spinner">
+                        <div class="spinner-border spinner-border-sm text-secondary"></div>
+                        <span>Loading…</span>
+                    </div>
+                </div>
+                <?php endif; ?>
+            </div>
+        </div>
+        <?php endfor; ?>
     </div>
-    <script>
-    document.getElementById('form-merge')?.addEventListener('submit', e => {
-        if (!confirm(<?php echo json_encode('Merge sessions "' . ($seshdates[$session_id] ?? '') . '" and "' . ($session_id_next ? ($seshdates[$session_id_next] ?? '') : '') . '"?'); ?>)) e.preventDefault();
-    });
-    document.getElementById('form-delete')?.addEventListener('submit', e => {
-        if (!confirm(<?php echo json_encode('Delete session "' . ($seshdates[$session_id] ?? '') . '"?'); ?>)) e.preventDefault();
-    });
-    </script>
+
+    <!-- Summary table -->
+    <?php if ($hasSession && count($summaryRows) > 0): ?>
+    <div id="summary-section">
+        <h6>Session summary — <?= htmlspecialchars($sessionLabel ?? $session_id, ENT_QUOTES) ?></h6>
+        <div id="summary-table-wrap">
+            <table id="summary-table">
+                <thead>
+                    <tr>
+                        <th></th>
+                        <th>Sensor</th>
+                        <th>Unit</th>
+                        <th>Samples</th>
+                        <th>Min</th>
+                        <th>Max</th>
+                        <th>Avg</th>
+                        <th>P25</th>
+                        <th>P75</th>
+                        <th>Trend</th>
+                    </tr>
+                </thead>
+                <tbody id="summary-tbody">
+                    <?php foreach ($summaryRows as $idx => $row): ?>
+                    <tr class="summary-row" data-row="<?= $idx ?>">
+                        <td>
+                            <button class="btn-add-panel"
+                                    data-sensor-key="<?= htmlspecialchars($row['sensor_key'], ENT_QUOTES) ?>"
+                                    title="Add to next empty panel">＋</button>
+                        </td>
+                        <td><?= htmlspecialchars($row['label'] ?? $row['sensor_key'], ENT_QUOTES) ?></td>
+                        <td><?= htmlspecialchars($row['unit'] ?? '', ENT_QUOTES) ?></td>
+                        <td><?= number_format((int) ($row['cnt'] ?? 0)) ?></td>
+                        <td><?= isset($row['min']) ? round((float)$row['min'], 2) : '—' ?></td>
+                        <td><?= isset($row['max']) ? round((float)$row['max'], 2) : '—' ?></td>
+                        <td><?= isset($row['avg']) ? round((float)$row['avg'], 2) : '—' ?></td>
+                        <td><?= isset($row['p25']) ? round((float)$row['p25'], 2) : '—' ?></td>
+                        <td><?= isset($row['p75']) ? round((float)$row['p75'], 2) : '—' ?></td>
+                        <td class="spark-cell">
+                            <span class="sparkline"
+                                  data-values="<?= htmlspecialchars($row['sparkline'] ?? '', ENT_QUOTES) ?>">
+                            </span>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <div id="summary-pagination">
+            <button id="pg-prev" disabled>‹ Prev</button>
+            <span id="pg-info"></span>
+            <button id="pg-next">Next ›</button>
+        </div>
+    </div>
     <?php endif; ?>
 
-    <?php if ($hasSession): ?>
-    <div class="section-title">Plot Variables</div>
-    <form method="get" action="dashboard.php" id="form-plot">
-        <input type="hidden" name="id" value="<?php echo htmlspecialchars($session_id); ?>">
-        <select name="s1" class="form-select form-select-sm mb-1" title="Variable 1">
-            <?php foreach ($coldata as $xcol):
-                $empty = ($coldataempty[$xcol['colname']] ?? 0) == 1; ?>
-                <option value="<?php echo $xcol['colname']; ?>"
-                    <?php if (($xcol['colname'] === ($v1 ?? 'kd'))) echo 'selected'; ?>
-                    <?php if (HIDE_EMPTY_VARIABLES && $empty) echo 'hidden'; ?>>
-                    <?php echo htmlspecialchars($xcol['colcomment'] ?: $xcol['colname']); ?>
-                    <?php if ($empty) echo ' [empty]'; ?>
-                </option>
-            <?php endforeach; ?>
-        </select>
-        <select name="s2" class="form-select form-select-sm mb-2" title="Variable 2">
-            <?php foreach ($coldata as $xcol):
-                $empty = ($coldataempty[$xcol['colname']] ?? 0) == 1; ?>
-                <option value="<?php echo $xcol['colname']; ?>"
-                    <?php if (($xcol['colname'] === ($v2 ?? 'kf'))) echo 'selected'; ?>
-                    <?php if (HIDE_EMPTY_VARIABLES && $empty) echo 'hidden'; ?>>
-                    <?php echo htmlspecialchars($xcol['colcomment'] ?: $xcol['colname']); ?>
-                    <?php if ($empty) echo ' [empty]'; ?>
-                </option>
-            <?php endforeach; ?>
-        </select>
-        <button class="btn btn-primary btn-sm w-100" type="submit">Update Chart</button>
-    </form>
+</div><!-- /#dwb-canvas -->
 
-    <div class="section-title">Export</div>
-    <div class="d-grid gap-1">
-        <a class="btn btn-sm btn-outline-secondary"
-           href="./export.php?sid=<?php echo $session_id; ?>&filetype=csv">CSV</a>
-        <a class="btn btn-sm btn-outline-secondary"
-           href="./export.php?sid=<?php echo $session_id; ?>&filetype=json">JSON</a>
-    </div>
-    <?php endif; ?>
-
-</aside>
-
-<!-- ═══════════════════════════════════ MAIN ════════════════════════════════ -->
-<main id="main">
-
-    <!-- Page title row -->
-    <div class="d-flex align-items-center justify-content-between mb-3">
-        <div>
-            <h5 class="mb-0 fw-semibold">Session Overview</h5>
-            <small class="text-muted"><?php echo htmlspecialchars($sessionLabel); ?></small>
-        </div>
-    </div>
-
-    <!-- ── Stat cards ── -->
-    <div class="row g-3 mb-3">
-
-        <?php if ($hasPlotData): ?>
-        <div class="col-6 col-lg-3">
-            <div class="stat-card bg-speed">
-                <div class="stat-label"><?php echo htmlspecialchars(substr($v1_label, 1, -1), ENT_QUOTES, 'UTF-8'); ?></div>
-                <div class="stat-value"><?php echo $avg1; ?></div>
-                <div class="stat-sub">avg &nbsp;·&nbsp; <?php echo $min1; ?> – <?php echo $max1; ?></div>
+<!-- ═══════════════════════════════════════════════════════ MAP MODAL -->
+<?php if ($hasSession && count($geolocs) > 0): ?>
+<div class="modal fade" id="mapModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">GPS Track</h5>
+                <button type="button" class="btn-close btn-close-white"
+                        data-bs-dismiss="modal"></button>
             </div>
-        </div>
-        <div class="col-6 col-lg-3">
-            <div class="stat-card bg-temp">
-                <div class="stat-label"><?php echo htmlspecialchars(substr($v2_label, 1, -1), ENT_QUOTES, 'UTF-8'); ?></div>
-                <div class="stat-value"><?php echo $avg2; ?></div>
-                <div class="stat-sub">avg &nbsp;·&nbsp; <?php echo $min2; ?> – <?php echo $max2; ?></div>
-            </div>
-        </div>
-        <?php else: ?>
-        <div class="col-6 col-lg-3">
-            <div class="stat-card bg-speed">
-                <div class="stat-label">Variable 1</div>
-                <div class="stat-value">—</div>
-                <div class="stat-sub"><?php echo ($hasSession && ($plotData['no_data'] ?? false)) ? 'no data' : 'select a session'; ?></div>
-            </div>
-        </div>
-        <div class="col-6 col-lg-3">
-            <div class="stat-card bg-temp">
-                <div class="stat-label">Variable 2</div>
-                <div class="stat-value">—</div>
-                <div class="stat-sub"><?php echo ($hasSession && ($plotData['no_data'] ?? false)) ? 'no data' : 'select a session'; ?></div>
-            </div>
-        </div>
-        <?php endif; ?>
-
-        <div class="col-6 col-lg-3">
-            <div class="stat-card bg-session">
-                <div class="stat-label">GPS Points</div>
-                <div class="stat-value"><?php echo count($geolocs); ?></div>
-                <div class="stat-sub">recorded in session</div>
-            </div>
-        </div>
-        <div class="col-6 col-lg-3">
-            <div class="stat-card bg-gps">
-                <div class="stat-label">Total Sessions</div>
-                <div class="stat-value"><?php echo count($sids); ?></div>
-                <div class="stat-sub">in database</div>
+            <div class="modal-body">
+                <div id="map"></div>
             </div>
         </div>
     </div>
-
-    <!-- ── Map + Data Summary row ── -->
-    <div class="row g-3 mb-3">
-
-        <!-- Map -->
-        <div class="col-12 col-lg-5">
-            <div class="card h-100">
-                <div class="card-header">GPS Track</div>
-                <div class="card-body p-2">
-                    <div id="map-canvas"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Data summary -->
-        <div class="col-12 col-lg-7">
-            <div class="card h-100">
-                <div class="card-header">Data Summary</div>
-                <div class="card-body">
-                <?php if ($hasPlotData): ?>
-                    <div class="table-responsive">
-                        <table class="table table-sm table-hover align-middle mb-0">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>Variable</th>
-                                    <th>Min</th>
-                                    <th>Max</th>
-                                    <th>P25</th>
-                                    <th>P75</th>
-                                    <th>Mean</th>
-                                    <th>Sparkline</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr>
-                                    <td class="fw-semibold"><?php echo htmlspecialchars(substr($v1_label, 1, -1)); ?></td>
-                                    <td><?php echo $min1; ?></td>
-                                    <td><?php echo $max1; ?></td>
-                                    <td><?php echo $pcnt25data1; ?></td>
-                                    <td><?php echo $pcnt75data1; ?></td>
-                                    <td><?php echo $avg1; ?></td>
-                                    <td><span class="line"><?php echo $sparkdata1; ?></span></td>
-                                </tr>
-                                <tr>
-                                    <td class="fw-semibold"><?php echo htmlspecialchars(substr($v2_label, 1, -1)); ?></td>
-                                    <td><?php echo $min2; ?></td>
-                                    <td><?php echo $max2; ?></td>
-                                    <td><?php echo $pcnt25data2; ?></td>
-                                    <td><?php echo $pcnt75data2; ?></td>
-                                    <td><?php echo $avg2; ?></td>
-                                    <td><span class="line"><?php echo $sparkdata2; ?></span></td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                <?php else: ?>
-                    <div class="d-flex align-items-center justify-content-center h-100 text-muted" style="min-height:180px">
-                        <div class="text-center">
-                            <div style="font-size:2rem">📊</div>
-                            <div class="mt-2"><?php echo ($hasSession && ($plotData['no_data'] ?? false)) ? 'No sensor data for selected variables' : 'Select a session to see statistics'; ?></div>
-                        </div>
-                    </div>
-                <?php endif; ?>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ── Chart ── -->
-    <div class="row g-3">
-        <div class="col-12">
-            <div class="card">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <span>Chart</span>
-                    <?php if ($hasSession && isset($v1_label, $v2_label)): ?>
-                    <span class="text-muted fw-normal" style="font-size:.8rem">
-                        <?php echo htmlspecialchars(substr($v1_label, 1, -1)); ?>
-                        &nbsp;vs&nbsp;
-                        <?php echo htmlspecialchars(substr($v2_label, 1, -1)); ?>
-                    </span>
-                    <?php endif; ?>
-                </div>
-                <div class="card-body">
-                <?php if ($hasSession && !empty($d1) && !empty($d2)): ?>
-                    <div id="placeholder" class="w-100"></div>
-                <?php else: ?>
-                    <div class="d-flex align-items-center justify-content-center text-muted" style="height:280px">
-                        <div class="text-center">
-                            <div style="font-size:2rem">📈</div>
-                            <div class="mt-2"><?php echo ($hasSession && ($plotData['no_data'] ?? false)) ? 'No sensor data for selected variables' : 'Select a session and variables to plot'; ?></div>
-                        </div>
-                    </div>
-                <?php endif; ?>
-                </div>
-            </div>
-        </div>
-    </div>
-
-</main>
-
-<!-- ══════════════════════════════════ SCRIPTS ═══════════════════════════════ -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js" integrity="sha512-v2CJ7UaYy4JwqLDIrZUI/4hqeoQieOmAZNXBeQyjo21dadnwR+8ZaIJVT8EE2iyI61OV8e6M8PP2/4hpQINQ/g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.14.1/jquery-ui.min.js" integrity="sha512-MSOo1aY+3pXCOCdGAYoBZ6YGI0aragoQsg1mKKBHXCYPIWxamwOE7Drh+N5CPgGI5SA9IEKJiPjdfqWFWmZtRA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/5.3.8/js/bootstrap.bundle.min.js" integrity="sha512-HvOjJrdwNpDbkGJIG2ZNqDlVqMo77qbs4Me4cah0HoDrfhrbA+8SBlZn1KrvAQw7cILLPFJvdwIgphzQmMm+Pw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/chosen/1.8.7/chosen.jquery.min.js" integrity="sha512-rMGGF4wg1R73ehtnxXBt5mbUfN9JUJwbk21KMlnLZDJh7BkPmeovBuddZCENJddHYYMkCh9hPFnPmS9sspki8g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" integrity="sha512-puJW3E/qXDqYp9IfhAI54BJEaWIfloJ7JWs7OeD5i6ruC9JZL1gERT1wjtwXFlh7CjE7ZJ+/vcRZRkIYIb6p4g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="static/js/jquery.peity.min.js"></script>
-
-<?php if ($hasSession && !empty($d1) && !empty($d2)): ?>
-<script src="static/js/jquery.flot.js"></script>
-<script src="static/js/jquery.flot.time.js"></script>
-<script src="static/js/jquery.flot.axislabels.js"></script>
-<script src="static/js/jquery.flot.tooltip.min.js"></script>
-<script src="static/js/jquery.flot.resize.min.js"></script>
-<script src="static/js/jquery.flot.selection.js"></script>
-<script src="static/js/torquehelpers.js"></script>
+</div>
 <?php endif; ?>
 
-<!-- Timezone detection (runs once if timezone not set) -->
+<!-- ═══════════════════════════════════════════════════════ SESSION ACTIONS MODAL -->
+<?php if ($hasSession): ?>
+<div class="modal fade" id="actionsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Session actions</h5>
+                <button type="button" class="btn-close btn-close-white"
+                        data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Delete -->
+                <form method="post" id="delete-form">
+                    <input type="hidden" name="deletesession"
+                           value="<?= htmlspecialchars($session_id, ENT_QUOTES) ?>">
+                    <button type="submit" class="btn btn-danger btn-sm w-100"
+                            id="btn-delete-session">
+                        🗑 Delete session <?= htmlspecialchars($sessionLabel ?? $session_id, ENT_QUOTES) ?>
+                    </button>
+                </form>
+
+                <?php if ($session_id_next !== false): ?>
+                <hr>
+                <p class="form-label">Merge with previous session</p>
+                <form method="post">
+                    <input type="hidden" name="mergesession"
+                           value="<?= htmlspecialchars($session_id, ENT_QUOTES) ?>">
+                    <input type="hidden" name="mergesessionwith"
+                           value="<?= htmlspecialchars($session_id_next, ENT_QUOTES) ?>">
+                    <button type="submit" class="btn btn-warning btn-sm w-100">
+                        ⇌ Merge with
+                        <?= htmlspecialchars($seshdates[$session_id_next] ?? $session_id_next, ENT_QUOTES) ?>
+                    </button>
+                </form>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
+<!-- ════════════════════════════════════════════════════════════════ SCRIPTS -->
+<script src="static/js/bootstrap.bundle.min.js"></script>
+<script src="static/js/chosen.jquery.min.js"></script>
+<script src="static/js/jquery.min.js"></script>
+<script src="static/js/peity.min.js"></script>
+<script src="static/js/uplot.min.js"></script>
+
 <script>
-$(function() {
-    if (<?php echo json_encode($timezone); ?>.length === 0) {
-        var tz   = "GMT " + -(new Date().getTimezoneOffset() / 60);
-        var tzurl = location.pathname + '?settz=1';
-        $.get(tzurl, {time: tz}, function() { location.reload(); });
+/* ── Inline state ──────────────────────────────────────────────────────── */
+const SESSION_ID   = <?= $hasSession ? json_encode($session_id) : 'null' ?>;
+const GRID_ROWS    = <?= $gridRows ?>;
+const GRID_COLS    = <?= $gridCols ?>;
+const PANEL_COUNT  = <?= $panelCount ?>;
+const GRID_PARAM   = <?= json_encode($gridParam) ?>;
+const GEO_POINTS   = <?= json_encode($geolocs) ?>;
+const IMAP_DATA    = <?= json_encode($imapdata) ?>;
+
+/* Panel state from PHP */
+const PANELS_INIT  = <?php
+    $out = [];
+    foreach ($panels as $p) {
+        $out[] = [
+            'sensor' => $p['sensor'],
+            'cs'     => $p['cs'],
+            'rs'     => $p['rs'],
+        ];
     }
-});
-</script>
+    echo json_encode($out);
+?>;
 
-<!-- Chosen: session picker -->
-<script>
-$(function() { $('.chosen-select').chosen({ width: '100%', disable_search_threshold: 5 }); });
-</script>
+/* ── DWB — Dashboard Workbench ──────────────────────────────────────────── */
+const DWB = (() => {
+    'use strict';
 
-<!-- Leaflet map -->
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-    var path = <?php echo $imapdata; ?>;
-    var map  = L.map('map-canvas');
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        maxZoom: 19
-    }).addTo(map);
+    /** Build a URL for the current state */
+    function buildUrl(sid, grid, panelArr) {
+        const u = new URL(window.location.href.split('?')[0], window.location.origin);
+        if (sid)  u.searchParams.set('id',   sid);
+        if (grid) u.searchParams.set('grid', grid);
+        panelArr.forEach((p, i) => {
+            if (p.sensor) u.searchParams.append(`p[${i}][s][]`, p.sensor);
+            if (p.cs > 1) u.searchParams.set(`p[${i}][cs]`, p.cs);
+            if (p.rs > 1) u.searchParams.set(`p[${i}][rs]`, p.rs);
+        });
+        return u.toString();
+    }
 
-    <?php if ($hasSession && !empty($geolocs)): ?>
-    var poly = L.polyline(path, { color: '#e94560', opacity: 0.85, weight: 4 }).addTo(map);
-    map.fitBounds(poly.getBounds());
-    <?php else: ?>
-    map.setView(path[0], 16);
-    L.marker(path[0]).addTo(map)
-        .bindPopup('<div style="text-align:center">Select a session<br>to see a GPS track.</div>')
-        .openPopup();
-    <?php endif; ?>
-});
-</script>
+    /** Navigate, preserving current grid + panels */
+    function setSession(sid) {
+        window.location = buildUrl(sid, GRID_PARAM, PANELS_INIT);
+    }
 
-<!-- Flot chart -->
-<?php if ($hasSession && !empty($d1) && !empty($d2)): ?>
-<script>
-$(function () {
-    var s1 = [<?php foreach ($d1 as $b) { echo '[' . $b[0] . ',' . $b[1] . '],'; } ?>];
-    var s2 = [<?php foreach ($d2 as $d) { echo '[' . $d[0] . ',' . $d[1] . '],'; } ?>];
+    /** Change grid preset, keep sensors that fit */
+    function setGrid(preset) {
+        const [r, c] = preset.split('x').map(Number);
+        const cap    = r * c;
+        const keep   = PANELS_INIT.slice(0, cap);
+        while (keep.length < cap) keep.push({ sensor: '', cs: 1, rs: 1 });
+        window.location = buildUrl(SESSION_ID, preset, keep);
+    }
 
-    $.plot('#placeholder', [
-        { data: s1, label: <?php echo $v1_label; ?> },
-        { data: s2, label: <?php echo $v2_label; ?>, yaxis: 2 }
-    ], {
-        xaxes: [{
-            mode: 'time',
-            timezone: 'browser',
-            axisLabel: 'Time',
-            timeformat: '%H:%M',
-            twelveHourClock: false
-        }],
-        yaxes: [
-            { axisLabel: <?php echo $v1_label; ?> },
-            { alignTicksWithAxis: 1, position: 'right', axisLabel: <?php echo $v2_label; ?> }
-        ],
-        legend: { position: 'nw' },
-        grid: {
-            borderWidth: 0,
-            hoverable: true,
-            clickable: true
-        },
-        tooltip: true,
-        tooltipOpts: {
-            content:    '%s: %y',
-            xDateFormat: '%H:%M:%S',
-            onHover: function (flotItem, $tooltipEl) { $tooltipEl.css('font-size', '12px'); }
+    /** Change sensor for one panel */
+    function setPanelSensor(idx, key) {
+        const arr = PANELS_INIT.map(p => Object.assign({}, p));
+        arr[idx].sensor = key;
+        window.location = buildUrl(SESSION_ID, GRID_PARAM, arr);
+    }
+
+    /** Adjust colspan / rowspan of a panel by delta */
+    function setPanelSpan(idx, dcs, drs) {
+        const arr = PANELS_INIT.map(p => Object.assign({}, p));
+        arr[idx].cs = Math.max(1, Math.min(GRID_COLS, arr[idx].cs + dcs));
+        arr[idx].rs = Math.max(1, Math.min(GRID_ROWS, arr[idx].rs + drs));
+        window.location = buildUrl(SESSION_ID, GRID_PARAM, arr);
+    }
+
+    /** Clear sensor from a panel */
+    function clearPanel(idx) {
+        const arr = PANELS_INIT.map(p => Object.assign({}, p));
+        arr[idx].sensor = '';
+        window.location = buildUrl(SESSION_ID, GRID_PARAM, arr);
+    }
+
+    /** Add sensor to next empty panel */
+    function addSensorToNextPanel(key) {
+        const arr = PANELS_INIT.map(p => Object.assign({}, p));
+        const free = arr.findIndex(p => !p.sensor);
+        if (free === -1) {
+            alert('All panels are occupied. Clear a panel first.');
+            return;
+        }
+        arr[free].sensor = key;
+        window.location = buildUrl(SESSION_ID, GRID_PARAM, arr);
+    }
+
+    return { buildUrl, setSession, setGrid, setPanelSensor, setPanelSpan, clearPanel, addSensorToNextPanel };
+})();
+
+/* ── Session picker ─────────────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', () => {
+    // Chosen
+    if (typeof jQuery !== 'undefined' && typeof jQuery.fn.chosen !== 'undefined') {
+        jQuery('#session-picker').chosen({
+            width: '100%',
+            search_contains: true,
+            no_results_text: 'No sessions found'
+        }).on('change', function () {
+            DWB.setSession(this.value);
+        });
+    }
+
+    // Grid preset pills
+    document.querySelectorAll('.grid-pill').forEach(btn => {
+        btn.addEventListener('click', () => DWB.setGrid(btn.dataset.preset));
+    });
+
+    // Per-panel sensor selects
+    document.querySelectorAll('.panel-sensor-select').forEach(sel => {
+        sel.addEventListener('change', () => {
+            DWB.setPanelSensor(Number(sel.dataset.panelIdx), sel.value);
+        });
+    });
+
+    // Add-to-panel buttons in summary table
+    document.querySelectorAll('.btn-add-panel').forEach(btn => {
+        btn.addEventListener('click', () => {
+            DWB.addSensorToNextPanel(btn.dataset.sensorKey);
+        });
+    });
+
+    // Delete session confirm
+    const delForm = document.getElementById('delete-form');
+    if (delForm) {
+        delForm.addEventListener('submit', e => {
+            if (!confirm('Delete this session? This cannot be undone.')) {
+                e.preventDefault();
+            }
+        });
+    }
+
+    // Sparklines
+    document.querySelectorAll('span.sparkline').forEach(el => {
+        const vals = el.dataset.values;
+        if (vals && typeof jQuery !== 'undefined') {
+            el.textContent = vals;
+            jQuery(el).peity('line', { width: 80, height: 22, stroke: '#4e9af1', fill: 'rgba(78,154,241,.15)' });
         }
     });
+
+    // Summary table pagination
+    initSummaryPagination();
 });
-</script>
+
+/* ── Summary pagination ─────────────────────────────────────────────────── */
+function initSummaryPagination() {
+    const tbody    = document.getElementById('summary-tbody');
+    const pgPrev   = document.getElementById('pg-prev');
+    const pgNext   = document.getElementById('pg-next');
+    const pgInfo   = document.getElementById('pg-info');
+    if (!tbody || !pgPrev) return;
+
+    const PER_PAGE = 15;
+    const rows     = Array.from(tbody.querySelectorAll('tr.summary-row'));
+    const total    = rows.length;
+    if (total <= PER_PAGE) {
+        document.getElementById('summary-pagination').style.display = 'none';
+        return;
+    }
+
+    let page = 0;
+    const maxPage = Math.ceil(total / PER_PAGE) - 1;
+
+    function render() {
+        rows.forEach((r, i) => {
+            r.style.display = (i >= page * PER_PAGE && i < (page + 1) * PER_PAGE) ? '' : 'none';
+        });
+        pgPrev.disabled = page === 0;
+        pgNext.disabled = page === maxPage;
+        pgInfo.textContent = `Page ${page + 1} / ${maxPage + 1}`;
+    }
+
+    pgPrev.addEventListener('click', () => { if (page > 0) { page--; render(); } });
+    pgNext.addEventListener('click', () => { if (page < maxPage) { page++; render(); } });
+    render();
+}
+
+/* ── Lazy Leaflet map ───────────────────────────────────────────────────── */
+<?php if ($hasSession && count($geolocs) > 0): ?>
+let leafletLoaded  = false;
+let leafletMap     = null;
+
+document.getElementById('mapModal')?.addEventListener('shown.bs.modal', () => {
+    if (leafletLoaded) return;
+    leafletLoaded = true;
+
+    const cssL = document.createElement('link');
+    cssL.rel   = 'stylesheet';
+    cssL.href  = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(cssL);
+
+    const jsL    = document.createElement('script');
+    jsL.src      = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    jsL.onload   = () => initLeaflet();
+    document.head.appendChild(jsL);
+});
+
+function initLeaflet() {
+    const pts = GEO_POINTS.map(p => [p.lat, p.lng]);
+    if (pts.length === 0) return;
+
+    leafletMap = L.map('map');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors',
+        maxZoom: 19
+    }).addTo(leafletMap);
+
+    const poly = L.polyline(pts, { color: '#4e9af1', weight: 3 }).addTo(leafletMap);
+    L.marker(pts[0], { title: 'Start' }).addTo(leafletMap);
+    L.marker(pts[pts.length - 1], { title: 'End' }).addTo(leafletMap);
+    leafletMap.fitBounds(poly.getBounds(), { padding: [20, 20] });
+}
 <?php endif; ?>
 
-<!-- Sparklines -->
-<?php if ($hasSession && isset($sparkdata1, $sparkdata2)): ?>
-<script>
-$(function() { $('span.line').peity('line', { width: 80, height: 24 }); });
-</script>
+/* ── Timezone detection ─────────────────────────────────────────────────── */
+<?php if ($timezone === ''): ?>
+(function () {
+    try {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (tz) fetch(`?settz=1&time=${encodeURIComponent(tz)}`);
+    } catch (e) {}
+})();
 <?php endif; ?>
-
+</script>
 </body>
 </html>
