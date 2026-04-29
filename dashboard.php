@@ -499,10 +499,10 @@ body {
         <select id="session-picker" name="id" data-placeholder="— Choose a session —">
             <option value=""></option>
             <?php foreach ($sids as $sid): ?>
-            <option value="<?= htmlspecialchars($sid, ENT_QUOTES) ?>"
-                <?= ($sid === $session_id) ? 'selected' : '' ?>>
-                <?= htmlspecialchars($seshdates[$sid] ?? $sid, ENT_QUOTES) ?>
-                &nbsp;(<?= htmlspecialchars($seshsizes[$sid] ?? '', ENT_QUOTES) ?>)
+                <option value="<?= htmlspecialchars((string) $sid, ENT_QUOTES) ?>"
+                <?= ((string) $sid === (string) $session_id) ? 'selected' : '' ?>>
+                <?= htmlspecialchars((string) ($seshdates[$sid] ?? $sid), ENT_QUOTES) ?>
+                &nbsp;(<?= htmlspecialchars((string) ($seshsizes[$sid] ?? ''), ENT_QUOTES) ?>)
             </option>
             <?php endforeach; ?>
         </select>
@@ -574,11 +574,11 @@ body {
                 <select class="panel-sensor-select" data-panel-idx="<?= $i ?>">
                     <option value="">— sensor —</option>
                     <?php foreach ($coldata as $col): ?>
-                    <option value="<?= htmlspecialchars($col['key'], ENT_QUOTES) ?>"
-                        <?= ($col['key'] === $sensorKey) ? 'selected' : '' ?>>
-                        <?= htmlspecialchars($col['label'], ENT_QUOTES) ?>
+                    <option value="<?= htmlspecialchars((string) ($col['key'] ?? ''), ENT_QUOTES) ?>"
+                        <?= ((string) ($col['key'] ?? '') === (string) $sensorKey) ? 'selected' : '' ?>>
+                        <?= htmlspecialchars((string) ($col['label'] ?? ''), ENT_QUOTES) ?>
                         <?php if (!empty($col['unit'])): ?>
-                            (<?= htmlspecialchars($col['unit'], ENT_QUOTES) ?>)
+                            (<?= htmlspecialchars((string) ($col['unit'] ?? ''), ENT_QUOTES) ?>)
                         <?php endif; ?>
                     </option>
                     <?php endforeach; ?>
@@ -629,10 +629,10 @@ body {
                     <p>Choose a sensor above</p>
                 </div>
                 <?php else: ?>
-                <div class="panel-chart-area"
-                     id="chart-<?= $i ?>"
-                     data-sid="<?= htmlspecialchars($session_id, ENT_QUOTES) ?>"
-                     data-key="<?= htmlspecialchars($sensorKey, ENT_QUOTES) ?>">
+             <div class="panel-chart-area"
+                 id="chart-<?= $i ?>"
+                 data-sid="<?= htmlspecialchars((string) ($session_id ?? ''), ENT_QUOTES) ?>"
+                 data-key="<?= htmlspecialchars((string) ($sensorKey ?? ''), ENT_QUOTES) ?>">
                     <div class="panel-spinner">
                         <div class="spinner-border spinner-border-sm text-secondary"></div>
                         <span>Loading…</span>
@@ -647,7 +647,7 @@ body {
     <!-- Summary table -->
     <?php if ($hasSession && count($summaryRows) > 0): ?>
     <div id="summary-section">
-        <h6>Session summary — <?= htmlspecialchars($sessionLabel ?? $session_id, ENT_QUOTES) ?></h6>
+    <h6>Session summary — <?= htmlspecialchars((string) ($sessionLabel ?? $session_id ?? ''), ENT_QUOTES) ?></h6>
         <div id="summary-table-wrap">
             <table id="summary-table">
                 <thead>
@@ -669,11 +669,11 @@ body {
                     <tr class="summary-row" data-row="<?= $idx ?>">
                         <td>
                             <button class="btn-add-panel"
-                                    data-sensor-key="<?= htmlspecialchars($row['sensor_key'], ENT_QUOTES) ?>"
+                                    data-sensor-key="<?= htmlspecialchars((string) ($row['sensor_key'] ?? ''), ENT_QUOTES) ?>"
                                     title="Add to next empty panel">＋</button>
                         </td>
-                        <td><?= htmlspecialchars($row['label'] ?? $row['sensor_key'], ENT_QUOTES) ?></td>
-                        <td><?= htmlspecialchars($row['unit'] ?? '', ENT_QUOTES) ?></td>
+                        <td><?= htmlspecialchars((string) ($row['label'] ?? $row['sensor_key'] ?? ''), ENT_QUOTES) ?></td>
+                        <td><?= htmlspecialchars((string) ($row['unit'] ?? ''), ENT_QUOTES) ?></td>
                         <td><?= number_format((int) ($row['cnt'] ?? 0)) ?></td>
                         <td><?= isset($row['min']) ? round((float)$row['min'], 2) : '—' ?></td>
                         <td><?= isset($row['max']) ? round((float)$row['max'], 2) : '—' ?></td>
@@ -682,7 +682,7 @@ body {
                         <td><?= isset($row['p75']) ? round((float)$row['p75'], 2) : '—' ?></td>
                         <td class="spark-cell">
                             <span class="sparkline"
-                                  data-values="<?= htmlspecialchars($row['sparkline'] ?? '', ENT_QUOTES) ?>">
+                                data-values="<?= htmlspecialchars((string) ($row['sparkline'] ?? ''), ENT_QUOTES) ?>">
                             </span>
                         </td>
                     </tr>
@@ -781,11 +781,11 @@ body {
             <div class="modal-body">
                 <!-- Delete -->
                 <form method="post" id="delete-form">
-                    <input type="hidden" name="deletesession"
-                           value="<?= htmlspecialchars($session_id, ENT_QUOTES) ?>">
+              <input type="hidden" name="deletesession"
+                  value="<?= htmlspecialchars((string) ($session_id ?? ''), ENT_QUOTES) ?>">
                     <button type="submit" class="btn btn-danger btn-sm w-100"
                             id="btn-delete-session">
-                        🗑 Delete session <?= htmlspecialchars($sessionLabel ?? $session_id, ENT_QUOTES) ?>
+                        🗑 Delete session <?= htmlspecialchars((string) ($sessionLabel ?? $session_id ?? ''), ENT_QUOTES) ?>
                     </button>
                 </form>
 
@@ -793,13 +793,13 @@ body {
                 <hr>
                 <p class="form-label">Merge with previous session</p>
                 <form method="post">
-                    <input type="hidden" name="mergesession"
-                           value="<?= htmlspecialchars($session_id, ENT_QUOTES) ?>">
-                    <input type="hidden" name="mergesessionwith"
-                           value="<?= htmlspecialchars($session_id_next, ENT_QUOTES) ?>">
+              <input type="hidden" name="mergesession"
+                  value="<?= htmlspecialchars((string) ($session_id ?? ''), ENT_QUOTES) ?>">
+              <input type="hidden" name="mergesessionwith"
+                  value="<?= htmlspecialchars((string) ($session_id_next ?? ''), ENT_QUOTES) ?>">
                     <button type="submit" class="btn btn-warning btn-sm w-100">
                         ⇌ Merge with
-                        <?= htmlspecialchars($seshdates[$session_id_next] ?? $session_id_next, ENT_QUOTES) ?>
+                        <?= htmlspecialchars((string) ($seshdates[$session_id_next] ?? $session_id_next ?? ''), ENT_QUOTES) ?>
                     </button>
                 </form>
                 <?php endif; ?>
