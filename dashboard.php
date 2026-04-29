@@ -218,43 +218,55 @@ body {
 #dwb-topbar .chosen-container { width: 100% !important; }
 #dwb-topbar .chosen-single {
     background: #0d0d1a !important;
-    border: 2px solid var(--dwb-accent) !important;
-    color: var(--dwb-text) !important;
-    border-radius: 6px;
+    background-color: #0d0d1a !important;
+    border: 2px solid #4e9af1 !important;
+    color: #c9d1d9 !important;
+    border-radius: 6px !important;
     height: 32px !important;
     line-height: 32px !important;
     padding: 0 10px !important;
-    box-shadow: 0 0 8px rgba(78, 154, 241, 0.3) !important;
-    font-weight: 500;
+    box-shadow: 0 0 8px rgba(78, 154, 241, 0.4) !important;
+    font-weight: 500 !important;
+}
+#dwb-topbar .chosen-single:hover {
+    border-color: #4e9af1 !important;
+    box-shadow: 0 0 12px rgba(78, 154, 241, 0.6) !important;
 }
 #dwb-topbar .chosen-single span {
-    color: var(--dwb-text) !important;
+    color: #c9d1d9 !important;
 }
-#dwb-topbar .chosen-single abbr {
-    background: var(--dwb-accent) !important;
-    color: #000 !important;
+#dwb-topbar .chosen-single div {
+    background: transparent !important;
+}
+#dwb-topbar .chosen-single div b {
+    background-image: none !important;
 }
 #dwb-topbar .chosen-drop {
-    background: #0d0d1a;
-    border: 1px solid var(--dwb-accent);
-    border-top: 1px solid var(--dwb-accent);
-    color: var(--dwb-text);
-    box-shadow: 0 4px 12px rgba(78, 154, 241, 0.2);
-    margin-top: 4px;
+    background: #0d0d1a !important;
+    background-color: #0d0d1a !important;
+    border: 1px solid #4e9af1 !important;
+    border-top: 1px solid #4e9af1 !important;
+    color: #c9d1d9 !important;
+    box-shadow: 0 4px 12px rgba(78, 154, 241, 0.3) !important;
+    margin-top: 4px !important;
+}
+#dwb-topbar .chosen-results { 
+    background: #0d0d1a !important;
 }
 #dwb-topbar .chosen-results li { 
-    color: var(--dwb-text); 
-    padding: 6px 8px;
+    color: #c9d1d9 !important;
+    background: #0d0d1a !important;
+    padding: 8px 10px !important;
 }
 #dwb-topbar .chosen-results li.highlighted { 
-    background: var(--dwb-accent); 
-    color: #000;
-    font-weight: 500;
+    background: #4e9af1 !important;
+    color: #000 !important;
+    font-weight: 500 !important;
 }
 #dwb-topbar .chosen-results li.group-result {
-    color: var(--dwb-muted);
-    font-weight: 600;
-    padding: 8px 8px 4px;
+    color: #6e7681 !important;
+    font-weight: 600 !important;
+    padding: 8px 10px 4px !important;
 }
 
 /* Grid preset pills */
