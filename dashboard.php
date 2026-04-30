@@ -856,9 +856,26 @@ const DWB = (() => {
         return u.toString();
     }
 
-    /** Navigate, preserving current grid + panels */
+    /** Navigate to new session, preserving current grid + panels (FIXED) */
     function setSession(sid) {
-        window.location = buildUrl(sid, GRID_PARAM, PANELS_INIT);
+        if (!sid) {
+            window.location = window.location.pathname;
+            return;
+        }
+
+        // Re-read current panel state from live DOM (this fixes the reset bug)
+        const currentPanels = [];
+        document.querySelectorAll('.dwb-panel').forEach(panel => {
+            const idx = Number(panel.dataset.panelIdx);
+            const sel = panel.querySelector('.panel-sensor-select');
+            currentPanels[idx] = {
+                sensor: sel ? sel.value : '',
+                cs: Number(panel.dataset.cs || 1),
+                rs: Number(panel.dataset.rs || 1)
+            };
+        });
+
+        window.location = buildUrl(sid, GRID_PARAM, currentPanels);
     }
 
     /** Change grid preset, keep sensors that fit */
@@ -961,6 +978,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Summary table pagination
     initSummaryPagination();
 });
+
+// Ensure charts only init when we have a valid session + small delay after Chosen.js (FIXED)
+if (SESSION_ID) {
+    setTimeout(initAllPanels, 200);
+}
 
 /* ── Summary pagination ─────────────────────────────────────────────────── */
 function initSummaryPagination() {
