@@ -61,6 +61,46 @@ final class DataHelper
     }
 
     /**
+     * Parse a two-column CSV file into an associative string map.
+     *
+     * The first row is treated as a header and skipped by default.
+     * Column 0 becomes the map key, column 1 becomes the map value.
+     *
+     * @param  string $csvFile     Absolute path to the CSV file.
+     * @param  bool   $skipHeader  Whether to skip the first row. Default true.
+     * @return array<string, string>
+     */
+    public static function csvToMap(string $csvFile, bool $skipHeader = true): array
+    {
+        $map = [];
+
+        $handle = fopen($csvFile, 'r');
+        if ($handle === false) {
+            return $map;
+        }
+
+        $first = true;
+
+        try {
+            while (($row = fgetcsv($handle, 1000, ',')) !== false) {
+                if ($skipHeader && $first) {
+                    $first = false;
+                    continue;
+                }
+                $first = false;
+
+                if (isset($row[0], $row[1])) {
+                    $map[(string) $row[0]] = (string) $row[1];
+                }
+            }
+        } finally {
+            fclose($handle);
+        }
+
+        return $map;
+    }
+
+    /**
      * Calculate the arithmetic mean of a numeric array.
      *
      * Returns 0 if the array is empty.

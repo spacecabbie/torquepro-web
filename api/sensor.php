@@ -27,8 +27,10 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../includes/config.php';
 require_once __DIR__ . '/../includes/Database/Connection.php';
+require_once __DIR__ . '/../includes/Helpers/DataHelper.php';
 
 use TorqueLogs\Database\Connection;
+use TorqueLogs\Helpers\DataHelper;
 
 header('Content-Type: application/json; charset=utf-8');
 // Allow browser caching for 60 s — sensor data for a past session never changes.
@@ -87,8 +89,10 @@ if ($sensor === false) {
     jsonError(404, 'Sensor not found.');
 }
 
+$fallbacks = DataHelper::csvToMap(__DIR__ . '/../data/torque_keys.csv');
+
 // Build a human-readable label.
-$label = $sensor['short_name'] ?: $sensor['full_name'] ?: $key;
+$label = $sensor['short_name'] ?: $sensor['full_name'] ?: ($fallbacks[$key] ?? $key);
 if (!empty($sensor['unit_symbol'])) {
     $label .= ' [' . $sensor['unit_symbol'] . ']';
 }

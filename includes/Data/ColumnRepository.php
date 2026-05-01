@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace TorqueLogs\Data;
 
+use TorqueLogs\Helpers\DataHelper;
+
 /**
  * Loads plottable column metadata and per-session emptiness flags.
  *
@@ -19,10 +21,10 @@ class ColumnRepository
      * Return all plottable sensor columns from the sensors table.
      *
      * Each entry contains:
-     *  - 'colname'    string  Sensor key (e.g. 'kd', 'kff1006')
-     *  - 'colcomment' string  Human-readable sensor name from short_name
+     *  - 'key'   string  Sensor key (e.g. 'kd', 'kff1006')
+     *  - 'label' string  Human-readable sensor name from short_name/full_name/fallback
      *
-     * @return list<array{colname: string, colcomment: string}>
+     * @return list<array{key: string, label: string}>
      * @throws \PDOException on database failure
      */
     public function findPlottable(): array
@@ -34,11 +36,12 @@ class ColumnRepository
              ORDER BY sensor_key"
         );
 
-        $columns = [];
+        $fallbacks = DataHelper::csvToMap(__DIR__ . '/../../data/torque_keys.csv');
+        $columns   = [];
 
         foreach ($stmt->fetchAll() as $row) {
-            // Use short_name if available, otherwise full_name, otherwise sensor_key
-            $displayName = $row['short_name'] ?: $row['full_name'] ?: $row['sensor_key'];
+            // Use short_name if available, otherwise full_name, otherwise CSV fallback, otherwise sensor_key
+            $displayName = $row['short_name'] ?: $row['full_name'] ?: ($fallbacks[$row['sensor_key']] ?? $row['sensor_key']);
             
             $columns[] = [
                 'key'    => $row['sensor_key'],

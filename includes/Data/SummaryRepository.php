@@ -12,6 +12,8 @@ declare(strict_types=1);
 
 namespace TorqueLogs\Data;
 
+use TorqueLogs\Helpers\DataHelper;
+
 class SummaryRepository
 {
     public function __construct(private readonly \PDO $pdo) {}
@@ -64,6 +66,8 @@ class SummaryRepository
             return [];
         }
 
+        $fallbacks = DataHelper::csvToMap(__DIR__ . '/../../data/torque_keys.csv');
+
         // Step 2: for each sensor compute P25/P75 and a sparkline string.
         // We load the ordered values per sensor separately.
         // This is O(sensors) extra queries but sensors per session is small (~30).
@@ -87,7 +91,7 @@ class SummaryRepository
 
             $result[] = [
                 'sensor_key' => $row['sensor_key'],
-                'label'      => $row['label'],
+                'label'      => $row['label'] === $row['sensor_key'] ? ($fallbacks[$row['sensor_key']] ?? $row['sensor_key']) : $row['label'],
                 'unit'       => $row['unit'],
                 'cnt'        => (int)   $row['cnt'],
                 'min'        => (float) $row['min_val'],
