@@ -16,6 +16,33 @@ use TorqueLogs\Database\Connection;
 use TorqueLogs\Helpers\DataHelper;
 
 /**
+ * Normalize a metadata value passed from Torque uploads.
+ *
+ * @param mixed $value
+ * @return string|null
+ */
+function normalizeTorqueMetadataValue(mixed $value): ?string
+{
+    if (is_array($value)) {
+        foreach ($value as $candidate) {
+            if (is_scalar($candidate) && (string)$candidate !== '') {
+                return (string)$candidate;
+            }
+        }
+
+        return null;
+    }
+
+    if (!is_scalar($value)) {
+        return null;
+    }
+
+    $normalized = trim((string)$value);
+
+    return $normalized === '' ? null : $normalized;
+}
+
+/**
  * Parse and store Torque upload data.
  *
  * @param array $params The parsed GET parameters from the upload.
@@ -44,23 +71,29 @@ function parseTorqueData(array $params, ?string $sessionId, ?string $deviceId, i
     // The actual k-key in sensor readings strips that leading zero (e.g. "kd", "kc").
     // Apply ltrim to align the two. Guard against an all-zero suffix (e.g. "000")
     // which would produce an empty string after ltrim — keep the original in that case.
-    $sensorNames        = [];
-    $sensorDescriptions = [];
-    $sensorUnits        = [];
+    $sensorNames         = [];
+    $sensorDescriptions  = [];
+    $sensorUnits         = [];
+    $sensorDefaultUnits  = [];
 
     foreach ($params as $rawKey => $value) {
-        if (!is_string($value) || $value === '') {
+        $metadataValue = normalizeTorqueMetadataValue($value);
+        if ($metadataValue === null) {
             continue;
         }
+
         if (preg_match('/^userShortName(.+)$/', $rawKey, $m)) {
             $suffix = ltrim($m[1], '0');
-            $sensorNames['k' . ($suffix !== '' ? $suffix : $m[1])] = $value;
+            $sensorNames['k' . ($suffix !== '' ? $suffix : $m[1])] = $metadataValue;
         } elseif (preg_match('/^userFullName(.+)$/', $rawKey, $m)) {
             $suffix = ltrim($m[1], '0');
-            $sensorDescriptions['k' . ($suffix !== '' ? $suffix : $m[1])] = $value;
+            $sensorDescriptions['k' . ($suffix !== '' ? $suffix : $m[1])] = $metadataValue;
         } elseif (preg_match('/^userUnit(.+)$/', $rawKey, $m)) {
             $suffix = ltrim($m[1], '0');
-            $sensorUnits['k' . ($suffix !== '' ? $suffix : $m[1])] = $value;
+            $sensorUnits['k' . ($suffix !== '' ? $suffix : $m[1])] = $metadataValue;
+        } elseif (preg_match('/^defaultUnit(.+)$/', $rawKey, $m)) {
+            $suffix = ltrim($m[1], '0');
+            $sensorDefaultUnits['k' . ($suffix !== '' ? $suffix : $m[1])] = $metadataValue;
         }
     }
 
@@ -154,11 +187,11 @@ function parseTorqueData(array $params, ?string $sessionId, ?string $deviceId, i
 
     $stmtInsertSensor = $pdo->prepare("
         INSERT INTO sensors (sensor_key, short_name, full_name, category_id, unit_id, is_gps)
-        VALUES (:key, :short_name, :full_name, 10, :unit_id, :is_gps)
+        VALUES (:key, COALESCE(:metadata_short_name, :key), :metadata_full_name, 10, :metadata_unit_id, :is_gps)
         ON DUPLICATE KEY UPDATE
-            short_name   = COALESCE(VALUES(short_name), short_name),
-            full_name    = COALESCE(VALUES(full_name), full_name),
-            unit_id      = COALESCE(VALUES(unit_id), unit_id),
+            short_name   = CASE WHEN :metadata_short_name IS NOT NULL THEN VALUES(short_name) ELSE short_name END,
+            full_name    = CASE WHEN :metadata_full_name IS NOT NULL THEN VALUES(full_name) ELSE full_name END,
+            unit_id      = CASE WHEN :metadata_unit_id IS NOT NULL THEN VALUES(unit_id) ELSE unit_id END,
             is_gps       = VALUES(is_gps),
             last_updated = CURRENT_TIMESTAMP
     ");
@@ -238,17 +271,18 @@ function parseTorqueData(array $params, ?string $sessionId, ?string $deviceId, i
         }
 
         $unitId = null;
-        if (isset($sensorUnits[$key])) {
-            $unitKey = DataHelper::normalizeUnitKey($sensorUnits[$key]);
+        $unitValue = $sensorUnits[$key] ?? $sensorDefaultUnits[$key] ?? null;
+        if ($unitValue !== null) {
+            $unitKey = DataHelper::normalizeUnitKey($unitValue);
             $unitId  = $unitKeyToId[$unitKey] ?? null;
         }
 
         $stmtInsertSensor->execute([
-            ':key'        => $key,
-            ':short_name' => $sensorNames[$key] ?? $key,
-            ':full_name'  => $sensorDescriptions[$key] ?? null,
-            ':unit_id'    => $unitId,
-            ':is_gps'     => in_array($key, $gpsSensorKeys, true) ? 1 : 0,
+            ':key'                => $key,
+            ':metadata_short_name'=> $sensorNames[$key] ?? null,
+            ':metadata_full_name' => $sensorDescriptions[$key] ?? null,
+            ':metadata_unit_id'   => $unitId,
+            ':is_gps'             => in_array($key, $gpsSensorKeys, true) ? 1 : 0,
         ]);
 
         if ($sensorIsNew) {
@@ -329,30 +363,12 @@ function parseTorqueData(array $params, ?string $sessionId, ?string $deviceId, i
     $pdo->commit();
 
     // ── Update processing_time_ms on the raw audit row ─────────────────────
-    $processingMs = (int)round(($startTime - hrtime(true)) / 1_000_000); // Wait, hrtime is nanoseconds, so (hrtime(true) - startTime) / 1e6
-    Wait, no: startTime is hrtime(true) at start, so processingMs = (hrtime(true) - startTime) / 1_000_000;
-
-    But since it's after commit, better to calculate inside.
-
-    Actually, the original has it after commit, so ok.
-
-    But to match, let's put it after commit. But since it's in the function, and upload_data.php has it after the call.
-
-    Perhaps move it to upload_data.php.
-
-    To keep simple, put it in parser.php after commit. But the function doesn't return the ms, so calculate inside.
-
-    The startTime is passed, so calculate inside the function. 
-
-    Let's add it. 
-
-    After commit:
-
-    // ── Update processing_time_ms on the raw audit row ─────────────────────
     $processingMs = (int)round((hrtime(true) - $startTime) / 1_000_000);
     try {
         $pdo->prepare(
             "UPDATE upload_requests_raw SET processing_time_ms = :ms WHERE id = :id"
         )->execute([':ms' => $processingMs, ':id' => $rawUploadId]);
-    } catch (Throwable) { /* non-critical; ignore */ }
+    } catch (Throwable) {
+        // Audit update failure should not break the main parser operation.
+    }
 }

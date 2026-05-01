@@ -224,7 +224,9 @@ Step 6 — Cleanup
 - Fixed `dashboard.php` session and sensor selection state handling so the selected session remains active when changing panel sensors.
 - Reworked dashboard client-side URL state builders to preserve live panel configuration from the DOM.
 - Removed embedded dashboard CSS from `dashboard.php` and centralized styles in `static/css/dashboard.css`.
-- Added backend sensor label fallback support from `data/torque_keys.csv` for missing database `short_name` / `full_name` values.- Fixed upload parsing so `gps_points` now stores GPS bearing, accuracy, and satellite count from Torque `kff` fields.
+- Added backend sensor label fallback support from `data/torque_keys.csv` for missing database `short_name` / `full_name` values.
+- Fixed parser metadata handling so `userShortName*` and `userFullName*` now update existing sensor labels when new values arrive, and `defaultUnit*` falls back when `userUnit*` is absent.
+- Fixed upload parsing so `gps_points` now stores GPS bearing, accuracy, and satellite count from Torque `kff` fields.
 - Added sensor unit parsing from Torque `userUnit*` metadata and preserved it on sensor registry upsert.
 - Filled session duration via `duration_seconds` on each upload update.
 ---
