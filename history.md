@@ -223,7 +223,8 @@ Step 6 — Cleanup
 ### 2026-05-01
 - Fixed `dashboard.php` session and sensor selection state handling so the selected session remains active when changing panel sensors.
 - Reworked dashboard client-side URL state builders to preserve live panel configuration from the DOM.
-- Extracted dashboard inline styles into `static/css/dashboard.css` and removed the large embedded `<style>` block from `dashboard.php`.
+- Removed embedded dashboard CSS from `dashboard.php` and centralized styles in `static/css/dashboard.css`.
+- Added backend sensor label fallback support from `data/torque_keys.csv` for missing database `short_name` / `full_name` values.
 
 ---
 

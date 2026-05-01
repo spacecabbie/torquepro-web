@@ -278,6 +278,7 @@ CREATE TABLE saved_dashboards (
 - Stabilized session selection in `dashboard.php` so changing sensors now preserves the current session and panel state.
 - Updated dashboard JS builders to read live DOM panel configuration before rebuilding URLs.
 - Removed embedded dashboard CSS from `dashboard.php` and centralized styles in `static/css/dashboard.css`.
+- Added backend sensor label fallback support from `data/torque_keys.csv` for missing database `short_name` / `full_name` values in `ColumnRepository`, `SummaryRepository`, and `api/sensor.php`.
 
 #### SavedDashboardRepository (`includes/Data/SavedDashboardRepository.php`)
 
