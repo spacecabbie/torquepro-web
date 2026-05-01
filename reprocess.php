@@ -23,8 +23,10 @@ if (PHP_SAPI !== 'cli') {
 
 require_once __DIR__ . '/includes/config.php';
 require_once __DIR__ . '/includes/Database/Connection.php';
+require_once __DIR__ . '/includes/Helpers/DataHelper.php';
 
 use TorqueLogs\Database\Connection;
+use TorqueLogs\Helpers\DataHelper;
 
 $dryRun = in_array('--dry-run', $argv ?? [], true);
 
@@ -70,9 +72,10 @@ $stmtSessionInsert = $pdo->prepare("
 
 $stmtSessionUpdate = $pdo->prepare("
     UPDATE sessions
-    SET end_time       = FROM_UNIXTIME(:ts / 1000),
-        total_readings = total_readings + :sensor_count,
-        profile_name   = COALESCE(:profile_name, profile_name)
+    SET end_time         = FROM_UNIXTIME(:ts / 1000),
+        duration_seconds = GREATEST(0, TIMESTAMPDIFF(SECOND, start_time, FROM_UNIXTIME(:ts / 1000))),
+        total_readings   = total_readings + :sensor_count,
+        profile_name     = COALESCE(:profile_name, profile_name)
     WHERE session_id = :session_id
 ");
 
@@ -82,13 +85,13 @@ $stmtCheck = $pdo->prepare(
 
 $stmtInsertSensor = $pdo->prepare("
     INSERT INTO sensors (sensor_key, short_name, full_name, category_id, unit_id, is_gps)
-    VALUES (:key, :short_name, :full_name, 10, NULL, :is_gps)
-");
-
-$stmtUpdateSensor = $pdo->prepare("
-    UPDATE sensors
-    SET short_name = :name_new, last_updated = CURRENT_TIMESTAMP
-    WHERE sensor_key = :key AND short_name != :name_check
+    VALUES (:key, :short_name, :full_name, 10, :unit_id, :is_gps)
+    ON DUPLICATE KEY UPDATE
+        short_name   = COALESCE(VALUES(short_name), short_name),
+        full_name    = COALESCE(VALUES(full_name), full_name),
+        unit_id      = COALESCE(VALUES(unit_id), unit_id),
+        is_gps       = VALUES(is_gps),
+        last_updated = CURRENT_TIMESTAMP
 ");
 
 $stmtReading = $pdo->prepare("
@@ -98,8 +101,8 @@ $stmtReading = $pdo->prepare("
 
 $stmtGps = $pdo->prepare("
     INSERT IGNORE INTO gps_points
-        (session_id, timestamp, latitude, longitude, altitude, speed_kmh)
-    VALUES (:session_id, :timestamp, :lat, :lon, :alt, :speed)
+        (session_id, timestamp, latitude, longitude, altitude, speed_kmh, bearing, accuracy, satellites)
+    VALUES (:session_id, :timestamp, :lat, :lon, :alt, :speed, :bearing, :accuracy, :satellites)
 ");
 
 $stmtProcessed = $pdo->prepare("
@@ -116,6 +119,12 @@ $stmtMarkOk = $pdo->prepare("
     SET result = 'ok', error_msg = NULL
     WHERE id = :id
 ");
+
+$unitTypeStmt = $pdo->query("SELECT id, unit_key FROM unit_types");
+$unitKeyToId  = [];
+foreach ($unitTypeStmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+    $unitKeyToId[$row['unit_key']] = (int) $row['id'];
+}
 
 // ── Process each row ───────────────────────────────────────────────────────
 foreach ($rawRows as $raw) {
@@ -144,9 +153,10 @@ foreach ($rawRows as $raw) {
         continue;
     }
 
-    // Extract sensor names with leading-zero-strip normalisation
+    // Extract sensor names and units with leading-zero-strip normalisation
     $sensorNames        = [];
     $sensorDescriptions = [];
+    $sensorUnits        = [];
     foreach ($params as $pk => $pv) {
         if (!is_string($pv) || $pv === '') {
             continue;
@@ -157,6 +167,9 @@ foreach ($rawRows as $raw) {
         } elseif (preg_match('/^userFullName(.+)$/', $pk, $m)) {
             $sfx = ltrim($m[1], '0');
             $sensorDescriptions['k' . ($sfx !== '' ? $sfx : $m[1])] = $pv;
+        } elseif (preg_match('/^userUnit(.+)$/', $pk, $m)) {
+            $sfx = ltrim($m[1], '0');
+            $sensorUnits['k' . ($sfx !== '' ? $sfx : $m[1])] = $pv;
         }
     }
 
@@ -203,10 +216,13 @@ foreach ($rawRows as $raw) {
         $sensorCount    = 0;
         $newSensorCount = 0;
         // Seed GPS from trip-start notice params; overridden by k-sensor values below.
-        $gpsLat   = $noticeGpsLat;
-        $gpsLon   = $noticeGpsLon;
-        $gpsAlt   = null;
-        $gpsSpeed = null;
+        $gpsLat        = $noticeGpsLat;
+        $gpsLon        = $noticeGpsLon;
+        $gpsAlt        = null;
+        $gpsSpeed      = null;
+        $gpsBearing    = null;
+        $gpsAccuracy   = null;
+        $gpsSatellites = null;
 
         foreach ($params as $key => $value) {
             if (!preg_match('/^k[0-9A-Za-z]+$/', $key)) {
@@ -229,6 +245,16 @@ foreach ($rawRows as $raw) {
                         $gpsLon = $floatValue;
                     }
                     break;
+                case 'kff1007':
+                    if ($floatValue >= 0.0 && $floatValue <= 360.0) {
+                        $gpsBearing = $floatValue;
+                    }
+                    break;
+                case 'kff1008':
+                    if ($floatValue >= 0.0) {
+                        $gpsAccuracy = $floatValue;
+                    }
+                    break;
                 case 'kff1009':
                     if ($gpsAlt === null) {
                         $gpsAlt = $floatValue;
@@ -237,6 +263,11 @@ foreach ($rawRows as $raw) {
                 case 'kff1010':
                     $gpsAlt = $floatValue;
                     break;
+                case 'kff1011':
+                    if ($floatValue >= 0.0) {
+                        $gpsSatellites = (int) $floatValue;
+                    }
+                    break;
                 case 'kff1001':
                     $gpsSpeed = $floatValue;
                     break;
@@ -244,23 +275,27 @@ foreach ($rawRows as $raw) {
 
             $sensorCount++;
 
+            $sensorIsNew = false;
             $stmtCheck->execute([':key' => $key]);
-            $exists = $stmtCheck->fetchColumn();
+            if ($stmtCheck->fetchColumn() === false) {
+                $sensorIsNew = true;
+            }
 
-            if ($exists === false) {
-                $stmtInsertSensor->execute([
-                    ':key'        => $key,
-                    ':short_name' => $sensorNames[$key] ?? $key,
-                    ':full_name'  => $sensorDescriptions[$key] ?? null,
-                    ':is_gps'     => in_array($key, $gpsSensorKeys, true) ? 1 : 0,
-                ]);
+            $unitId = null;
+            if (isset($sensorUnits[$key])) {
+                $unitKey = DataHelper::normalizeUnitKey($sensorUnits[$key]);
+                $unitId  = $unitKeyToId[$unitKey] ?? null;
+            }
+
+            $stmtInsertSensor->execute([
+                ':key'        => $key,
+                ':short_name' => $sensorNames[$key] ?? $key,
+                ':full_name'  => $sensorDescriptions[$key] ?? null,
+                ':unit_id'    => $unitId,
+                ':is_gps'     => in_array($key, $gpsSensorKeys, true) ? 1 : 0,
+            ]);
+            if ($sensorIsNew) {
                 $newSensorCount++;
-            } elseif (isset($sensorNames[$key])) {
-                $stmtUpdateSensor->execute([
-                    ':key'        => $key,
-                    ':name_new'   => $sensorNames[$key],
-                    ':name_check' => $sensorNames[$key],
-                ]);
             }
 
             $stmtReading->execute([
@@ -288,6 +323,9 @@ foreach ($rawRows as $raw) {
                 ':lon'        => $gpsLon,
                 ':alt'        => $gpsAlt,
                 ':speed'      => $gpsSpeed,
+                ':bearing'    => $gpsBearing,
+                ':accuracy'   => $gpsAccuracy,
+                ':satellites' => $gpsSatellites,
             ]);
         }
 

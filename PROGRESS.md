@@ -279,6 +279,9 @@ CREATE TABLE saved_dashboards (
 - Updated dashboard JS builders to read live DOM panel configuration before rebuilding URLs.
 - Removed embedded dashboard CSS from `dashboard.php` and centralized styles in `static/css/dashboard.css`.
 - Added backend sensor label fallback support from `data/torque_keys.csv` for missing database `short_name` / `full_name` values in `ColumnRepository`, `SummaryRepository`, and `api/sensor.php`.
+- Fixed upload parser metadata handling so `userUnit*` is now parsed and sensor units are stored in `sensors.unit_id`.
+- Extended `gps_points` insertion to include bearing, accuracy, and satellites from Torque kff GPS readings.
+- Populated `sessions.duration_seconds` on every upload update.
 
 #### SavedDashboardRepository (`includes/Data/SavedDashboardRepository.php`)
 

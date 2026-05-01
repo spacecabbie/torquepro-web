@@ -181,6 +181,39 @@ final class DataHelper
     }
 
     /**
+     * Normalize a raw Torque unit string into a canonical unit key.
+     *
+     * @param  string $unit
+     * @return string
+     */
+    public static function normalizeUnitKey(string $unit): string
+    {
+        $normalized = strtolower(trim($unit));
+
+        return match ($normalized) {
+            'km/h', 'kmh', 'kph' => 'kmh',
+            'mph'                => 'mph',
+            'm/s', 'ms'          => 'ms',
+            '°c', '*c', 'c', 'celsius' => 'celsius',
+            '°f', '*f', 'f', 'fahrenheit' => 'fahrenheit',
+            'bar'                => 'bar',
+            'psi'                => 'psi',
+            'kpa'                => 'kpa',
+            'mbar'               => 'mbar',
+            'v'                  => 'volt',
+            'volt'               => 'volt',
+            '%', 'percent'       => 'percent',
+            'rpm'                => 'rpm',
+            'l/h', 'lt/h'        => 'lh',
+            'cc/min'             => 'ccmin',
+            'mg/cp'              => 'mgcp',
+            'm3/h', 'm³/h'       => 'm3h',
+            'degree'             => 'degree',
+            default              => $normalized,
+        };
+    }
+
+    /**
      * Case-insensitive substring count.
      *
      * Origin: parse_functions.php → substri_count()

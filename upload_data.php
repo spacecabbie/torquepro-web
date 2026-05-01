@@ -34,9 +34,11 @@ declare(strict_types=1);
 require_once __DIR__ . '/includes/config.php';
 require_once __DIR__ . '/includes/Auth/Auth.php';
 require_once __DIR__ . '/includes/Database/Connection.php';
+require_once __DIR__ . '/includes/Helpers/DataHelper.php';
 
 use TorqueLogs\Auth\Auth;
 use TorqueLogs\Database\Connection;
+use TorqueLogs\Helpers\DataHelper;
 
 // ── Auth guard (Torque-ID) ─────────────────────────────────────────────────
 Auth::checkApp();
@@ -120,6 +122,7 @@ try {
     // which would produce an empty string after ltrim — keep the original in that case.
     $sensorNames        = [];
     $sensorDescriptions = [];
+    $sensorUnits        = [];
 
     foreach ($_GET as $rawKey => $value) {
         if (!is_string($value) || $value === '') {
@@ -131,6 +134,9 @@ try {
         } elseif (preg_match('/^userFullName(.+)$/', $rawKey, $m)) {
             $suffix = ltrim($m[1], '0');
             $sensorDescriptions['k' . ($suffix !== '' ? $suffix : $m[1])] = $value;
+        } elseif (preg_match('/^userUnit(.+)$/', $rawKey, $m)) {
+            $suffix = ltrim($m[1], '0');
+            $sensorUnits['k' . ($suffix !== '' ? $suffix : $m[1])] = $value;
         }
     }
 
@@ -138,10 +144,13 @@ try {
     // Torque sends lat=/lon= as plain top-level params (not k-prefixed) in the
     // "Trip started" notification. These are valid GPS fixes and must be stored.
     // They are overwritten below if the same request also contains kff1006/kff1005.
-    $gpsLat   = null;
-    $gpsLon   = null;
-    $gpsAlt   = null;
-    $gpsSpeed = null;
+    $gpsLat       = null;
+    $gpsLon       = null;
+    $gpsAlt       = null;
+    $gpsSpeed     = null;
+    $gpsBearing   = null;
+    $gpsAccuracy  = null;
+    $gpsSatellites = null;
 
     $rawLat = $_GET['lat'] ?? '';
     $rawLon = $_GET['lon'] ?? '';
@@ -176,6 +185,14 @@ try {
         ':profile_name' => $profileName,
     ]);
 
+    $unitTypeStmt = $pdo->query("SELECT id, unit_key FROM unit_types");
+    $unitKeyToId  = [];
+    foreach ($unitTypeStmt->fetchAll(
+        \PDO::FETCH_ASSOC
+    ) as $row) {
+        $unitKeyToId[$row['unit_key']] = (int) $row['id'];
+    }
+
     // ── UPSERT sensors + insert sensor readings ────────────────────────────
     $sensorCount    = 0;
     $newSensorCount = 0;
@@ -206,7 +223,6 @@ try {
         "SELECT sensor_key FROM sensors WHERE sensor_key = :key"
     );
 
-    // INSERT IGNORE so replayed / retried requests are idempotent.
     $stmtReading = $pdo->prepare("
         INSERT IGNORE INTO sensor_readings (session_id, timestamp, sensor_key, value)
         VALUES (:session_id, :timestamp, :sensor_key, :value)
@@ -214,15 +230,13 @@ try {
 
     $stmtInsertSensor = $pdo->prepare("
         INSERT INTO sensors (sensor_key, short_name, full_name, category_id, unit_id, is_gps)
-        VALUES (:key, :short_name, :full_name, 10, NULL, :is_gps)
-    ");
-
-    // :name_new and :name_check carry the same value but must be distinct
-    // named placeholders — PDO native-mode rejects reuse within one statement.
-    $stmtUpdateSensor = $pdo->prepare("
-        UPDATE sensors
-        SET short_name = :name_new, last_updated = CURRENT_TIMESTAMP
-        WHERE sensor_key = :key AND short_name != :name_check
+        VALUES (:key, :short_name, :full_name, 10, :unit_id, :is_gps)
+        ON DUPLICATE KEY UPDATE
+            short_name   = COALESCE(VALUES(short_name), short_name),
+            full_name    = COALESCE(VALUES(full_name), full_name),
+            unit_id      = COALESCE(VALUES(unit_id), unit_id),
+            is_gps       = VALUES(is_gps),
+            last_updated = CURRENT_TIMESTAMP
     ");
 
     foreach ($_GET as $key => $value) {
@@ -260,6 +274,16 @@ try {
                     $gpsLon = $floatValue;
                 }
                 break;
+            case 'kff1007':
+                if ($floatValue >= 0.0 && $floatValue <= 360.0) {
+                    $gpsBearing = $floatValue;
+                }
+                break;
+            case 'kff1008':
+                if ($floatValue >= 0.0) {
+                    $gpsAccuracy = $floatValue;
+                }
+                break;
             case 'kff1009':
                 // Altitude fallback (older Torque versions); only use if kff1010
                 // has not already set a value.
@@ -271,6 +295,11 @@ try {
                 // Altitude preferred (current Torque versions); overrides kff1009.
                 $gpsAlt = $floatValue;
                 break;
+            case 'kff1011':
+                if ($floatValue >= 0.0) {
+                    $gpsSatellites = (int) $floatValue;
+                }
+                break;
             case 'kff1001':
                 $gpsSpeed = $floatValue;
                 break;
@@ -278,25 +307,28 @@ try {
 
         $sensorCount++;
 
-        // Ensure sensor exists in the master registry.
+        $sensorIsNew = false;
         $stmtCheck->execute([':key' => $key]);
-        $sensorKeyExists = $stmtCheck->fetchColumn();
+        if ($stmtCheck->fetchColumn() === false) {
+            $sensorIsNew = true;
+        }
 
-        if ($sensorKeyExists === false) {
-            $stmtInsertSensor->execute([
-                ':key'        => $key,
-                ':short_name' => $sensorNames[$key] ?? $key,
-                ':full_name'  => $sensorDescriptions[$key] ?? null,
-                ':is_gps'     => in_array($key, $gpsSensorKeys, true) ? 1 : 0,
-            ]);
+        $unitId = null;
+        if (isset($sensorUnits[$key])) {
+            $unitKey = DataHelper::normalizeUnitKey($sensorUnits[$key]);
+            $unitId  = $unitKeyToId[$unitKey] ?? null;
+        }
+
+        $stmtInsertSensor->execute([
+            ':key'        => $key,
+            ':short_name' => $sensorNames[$key] ?? $key,
+            ':full_name'  => $sensorDescriptions[$key] ?? null,
+            ':unit_id'    => $unitId,
+            ':is_gps'     => in_array($key, $gpsSensorKeys, true) ? 1 : 0,
+        ]);
+
+        if ($sensorIsNew) {
             $newSensorCount++;
-        } elseif (isset($sensorNames[$key])) {
-            // Update the short name if Torque supplied one and it has changed.
-            $stmtUpdateSensor->execute([
-                ':key'        => $key,
-                ':name_new'   => $sensorNames[$key],
-                ':name_check' => $sensorNames[$key],
-            ]);
         }
 
         $stmtReading->execute([
@@ -314,9 +346,10 @@ try {
     // end_time and profile_name in sync.
     $stmtSessionUpdate = $pdo->prepare("
         UPDATE sessions
-        SET end_time       = FROM_UNIXTIME(:ts / 1000),
-            total_readings = total_readings + :sensor_count,
-            profile_name   = COALESCE(:profile_name, profile_name)
+        SET end_time         = FROM_UNIXTIME(:ts / 1000),
+            duration_seconds = GREATEST(0, TIMESTAMPDIFF(SECOND, start_time, FROM_UNIXTIME(:ts / 1000))),
+            total_readings   = total_readings + :sensor_count,
+            profile_name     = COALESCE(:profile_name, profile_name)
         WHERE session_id = :session_id
     ");
     $stmtSessionUpdate->execute([
@@ -336,8 +369,8 @@ try {
     ) {
         $stmtGps = $pdo->prepare("
             INSERT IGNORE INTO gps_points
-                (session_id, timestamp, latitude, longitude, altitude, speed_kmh)
-            VALUES (:session_id, :timestamp, :lat, :lon, :alt, :speed)
+                (session_id, timestamp, latitude, longitude, altitude, speed_kmh, bearing, accuracy, satellites)
+            VALUES (:session_id, :timestamp, :lat, :lon, :alt, :speed, :bearing, :accuracy, :satellites)
         ");
         $stmtGps->execute([
             ':session_id' => $sessionId,
@@ -346,6 +379,9 @@ try {
             ':lon'        => $gpsLon,
             ':alt'        => $gpsAlt,
             ':speed'      => $gpsSpeed,
+            ':bearing'    => $gpsBearing,
+            ':accuracy'   => $gpsAccuracy,
+            ':satellites' => $gpsSatellites,
         ]);
     }
 
