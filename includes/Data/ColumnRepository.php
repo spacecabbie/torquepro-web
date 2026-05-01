@@ -41,8 +41,8 @@ class ColumnRepository
             $displayName = $row['short_name'] ?: $row['full_name'] ?: $row['sensor_key'];
             
             $columns[] = [
-                'colname'    => $row['sensor_key'],
-                'colcomment' => $displayName,
+                'key'    => $row['sensor_key'],
+                'label'  => $displayName,
             ];
         }
 

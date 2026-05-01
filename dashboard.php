@@ -165,7 +165,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
 <link rel="stylesheet" href="static/css/bootstrap.min.css">
 <link rel="stylesheet" href="static/css/chosen.min.css">
 <link rel="stylesheet" href="static/css/uplot.min.css">
-<link rel="stylesheet" href="static/css/dashboard.css">
+<style>
 /* ── Colour tokens ─────────────────────────────────────── */
 :root {
     --dwb-bg:      #0d0d1a;
@@ -217,57 +217,24 @@ body {
 }
 #dwb-topbar .chosen-container { width: 100% !important; }
 #dwb-topbar .chosen-single {
-    background: #0d0d1a !important;
-    background-color: #0d0d1a !important;
-    border: 2px solid #4e9af1 !important;
-    color: #c9d1d9 !important;
-    border-radius: 6px !important;
-    height: 32px !important;
-    line-height: 32px !important;
-    padding: 0 10px !important;
-    box-shadow: 0 0 8px rgba(78, 154, 241, 0.4) !important;
-    font-weight: 500 !important;
-}
-#dwb-topbar .chosen-single:hover {
-    border-color: #4e9af1 !important;
-    box-shadow: 0 0 12px rgba(78, 154, 241, 0.6) !important;
-}
-#dwb-topbar .chosen-single span {
-    color: #c9d1d9 !important;
-}
-#dwb-topbar .chosen-single div {
-    background: transparent !important;
-}
-#dwb-topbar .chosen-single div b {
-    background-image: none !important;
+    background: #111128 !important;
+    border: 1px solid var(--dwb-border) !important;
+    color: var(--dwb-text) !important;
+    border-radius: 6px;
+    height: 30px !important;
+    line-height: 30px !important;
+    padding: 0 8px !important;
+    box-shadow: none !important;
 }
 #dwb-topbar .chosen-drop {
-    background: #0d0d1a !important;
-    background-color: #0d0d1a !important;
-    border: 1px solid #4e9af1 !important;
-    border-top: 1px solid #4e9af1 !important;
-    color: #c9d1d9 !important;
-    box-shadow: 0 4px 12px rgba(78, 154, 241, 0.3) !important;
-    margin-top: 4px !important;
+    background: #111128;
+    border: 1px solid var(--dwb-border);
+    border-top: none;
+    color: var(--dwb-text);
+    box-shadow: 0 4px 12px rgba(0,0,0,.6);
 }
-#dwb-topbar .chosen-results { 
-    background: #0d0d1a !important;
-}
-#dwb-topbar .chosen-results li { 
-    color: #c9d1d9 !important;
-    background: #0d0d1a !important;
-    padding: 8px 10px !important;
-}
-#dwb-topbar .chosen-results li.highlighted { 
-    background: #4e9af1 !important;
-    color: #000 !important;
-    font-weight: 500 !important;
-}
-#dwb-topbar .chosen-results li.group-result {
-    color: #6e7681 !important;
-    font-weight: 600 !important;
-    padding: 8px 10px 4px !important;
-}
+#dwb-topbar .chosen-results li { color: var(--dwb-text); }
+#dwb-topbar .chosen-results li.highlighted { background: var(--dwb-accent); color: #fff; }
 
 /* Grid preset pills */
 #grid-presets { display: flex; gap: 4px; flex-shrink: 0; }
