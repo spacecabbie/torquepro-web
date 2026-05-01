@@ -165,328 +165,9 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
 <link rel="stylesheet" href="static/css/bootstrap.min.css">
 <link rel="stylesheet" href="static/css/chosen.min.css">
 <link rel="stylesheet" href="static/css/uplot.min.css">
-<style>
-/* ── Colour tokens ─────────────────────────────────────── */
-:root {
-    --dwb-bg:      #0d0d1a;
-    --dwb-surface: #1a1a2e;
-    --dwb-border:  #2e2e4a;
-    --dwb-accent:  #4e9af1;
-    --dwb-text:    #c9d1d9;
-    --dwb-muted:   #6e7681;
-    --dwb-danger:  #f85149;
-}
 
-/* ── Reset / base ──────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; }
-body {
-    margin: 0;
-    font-family: "Segoe UI", system-ui, sans-serif;
-    font-size: 13px;
-    background: var(--dwb-bg);
-    color: var(--dwb-text);
-    overflow-x: hidden;
-}
+<link rel="stylesheet" href="static/css/dashboard.css">
 
-/* ── Top bar ───────────────────────────────────────────── */
-#dwb-topbar {
-    position: fixed;
-    top: 0; left: 0; right: 0;
-    height: 48px;
-    background: var(--dwb-surface);
-    border-bottom: 1px solid var(--dwb-border);
-    display: flex;
-    align-items: center;
-    padding: 0 12px;
-    gap: 10px;
-    z-index: 1040;
-}
-
-#dwb-topbar .brand {
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--dwb-accent);
-    white-space: nowrap;
-    letter-spacing: .5px;
-}
-
-/* Session picker (Chosen) */
-#dwb-topbar .session-wrap {
-    flex: 0 0 260px;
-    position: relative;
-}
-#dwb-topbar .chosen-container { width: 100% !important; }
-#dwb-topbar .chosen-single {
-    background: #111128 !important;
-    border: 1px solid var(--dwb-border) !important;
-    color: var(--dwb-text) !important;
-    border-radius: 6px;
-    height: 30px !important;
-    line-height: 30px !important;
-    padding: 0 8px !important;
-    box-shadow: none !important;
-}
-#dwb-topbar .chosen-drop {
-    background: #111128;
-    border: 1px solid var(--dwb-border);
-    border-top: none;
-    color: var(--dwb-text);
-    box-shadow: 0 4px 12px rgba(0,0,0,.6);
-}
-#dwb-topbar .chosen-results li { color: var(--dwb-text); }
-#dwb-topbar .chosen-results li.highlighted { background: var(--dwb-accent); color: #fff; }
-
-/* Grid preset pills */
-#grid-presets { display: flex; gap: 4px; flex-shrink: 0; }
-.grid-pill {
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 20px;
-    border: 1px solid var(--dwb-border);
-    background: transparent;
-    color: var(--dwb-muted);
-    cursor: pointer;
-    transition: background .15s, color .15s;
-    white-space: nowrap;
-}
-.grid-pill:hover, .grid-pill.active {
-    background: var(--dwb-accent);
-    border-color: var(--dwb-accent);
-    color: #fff;
-}
-
-/* Right side actions */
-#dwb-topbar .topbar-right {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-shrink: 0;
-}
-
-/* ── Main canvas ───────────────────────────────────────── */
-#dwb-canvas {
-    margin-top: 48px;
-    padding: 12px;
-}
-
-/* ── Panel grid ────────────────────────────────────────── */
-#panel-grid {
-    display: grid;
-    grid-template-columns: repeat(var(--grid-cols, 3), 1fr);
-    gap: 10px;
-}
-
-.dwb-panel {
-    background: var(--dwb-surface);
-    border: 1px solid var(--dwb-border);
-    border-radius: 8px;
-    display: flex;
-    flex-direction: column;
-    min-height: 220px;
-    overflow: hidden;
-}
-
-.panel-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
-    border-bottom: 1px solid var(--dwb-border);
-    background: rgba(0,0,0,.15);
-    flex-shrink: 0;
-}
-
-.panel-sensor-select {
-    flex: 1;
-    font-size: 12px;
-    background: transparent;
-    border: none;
-    color: var(--dwb-text);
-    cursor: pointer;
-    outline: none;
-    min-width: 0;
-}
-.panel-sensor-select option { background: #1a1a2e; }
-
-.panel-menu-btn {
-    flex-shrink: 0;
-    background: none;
-    border: none;
-    color: var(--dwb-muted);
-    cursor: pointer;
-    font-size: 16px;
-    line-height: 1;
-    padding: 0 2px;
-    border-radius: 4px;
-}
-.panel-menu-btn:hover { color: var(--dwb-text); background: rgba(255,255,255,.07); }
-
-.panel-body {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: relative;
-    min-height: 180px;
-    padding: 8px;
-    overflow: hidden;
-}
-
-.panel-empty {
-    text-align: center;
-    color: var(--dwb-muted);
-}
-.panel-empty .empty-icon { font-size: 28px; margin-bottom: 6px; }
-.panel-empty p { font-size: 11px; margin: 0; }
-
-.panel-chart-area {
-    width: 100%;
-    height: 100%;
-    min-height: 160px;
-    overflow: hidden;
-}
-
-/* uPlot overrides — blend into dark theme */
-.u-wrap { background: transparent !important; }
-.u-title { display: none; }
-.u-cursor-x, .u-cursor-y { border-color: rgba(255,255,255,0.25) !important; }
-.u-cursor-pt { border-radius: 50%; }
-.u-legend { color: #8b97a8; font-size: 11px; }
-
-
-/* Panel spinner */
-.panel-spinner {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    color: var(--dwb-muted);
-    font-size: 11px;
-}
-
-/* ── Summary table section ─────────────────────────────── */
-#summary-section {
-    margin-top: 14px;
-}
-#summary-section h6 {
-    font-size: 12px;
-    color: var(--dwb-muted);
-    text-transform: uppercase;
-    letter-spacing: .6px;
-    margin-bottom: 8px;
-}
-#summary-table-wrap {
-    overflow-x: auto;
-}
-#summary-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-}
-#summary-table th, #summary-table td {
-    padding: 5px 10px;
-    border-bottom: 1px solid var(--dwb-border);
-    white-space: nowrap;
-}
-#summary-table th {
-    color: var(--dwb-muted);
-    font-weight: 500;
-    text-align: left;
-    background: rgba(0,0,0,.2);
-}
-#summary-table tr:hover td { background: rgba(255,255,255,.03); }
-#summary-table td:nth-child(n+3) { text-align: right; font-variant-numeric: tabular-nums; }
-.spark-cell canvas { vertical-align: middle; }
-
-/* Add-to-panel button */
-.btn-add-panel {
-    padding: 1px 6px;
-    font-size: 11px;
-    border-radius: 4px;
-    border: 1px solid var(--dwb-border);
-    background: transparent;
-    color: var(--dwb-muted);
-    cursor: pointer;
-    transition: background .15s, color .15s;
-}
-.btn-add-panel:hover {
-    background: var(--dwb-accent);
-    border-color: var(--dwb-accent);
-    color: #fff;
-}
-
-/* Summary pagination */
-#summary-pagination {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-top: 8px;
-    font-size: 12px;
-    color: var(--dwb-muted);
-}
-#summary-pagination button {
-    background: var(--dwb-surface);
-    border: 1px solid var(--dwb-border);
-    color: var(--dwb-text);
-    border-radius: 4px;
-    padding: 2px 8px;
-    cursor: pointer;
-    font-size: 12px;
-}
-#summary-pagination button:disabled { opacity: .35; cursor: default; }
-
-/* ── Map modal ─────────────────────────────────────────── */
-#mapModal .modal-content {
-    background: var(--dwb-surface);
-    border: 1px solid var(--dwb-border);
-}
-#mapModal .modal-header {
-    border-bottom: 1px solid var(--dwb-border);
-}
-#map { height: 420px; background: #111; border-radius: 4px; }
-
-/* ── Session actions modal ─────────────────────────────── */
-#actionsModal .modal-content {
-    background: var(--dwb-surface);
-    border: 1px solid var(--dwb-border);
-}
-#actionsModal .modal-header { border-bottom: 1px solid var(--dwb-border); }
-#actionsModal .form-label { font-size: 12px; color: var(--dwb-muted); }
-
-/* ── Export modal ──────────────────────────────────────── */
-#exportModal .modal-content {
-    background: var(--dwb-surface);
-    border: 1px solid var(--dwb-border);
-}
-#exportModal .modal-header { border-bottom: 1px solid var(--dwb-border); }
-
-/* ── Save modal ────────────────────────────────────────────── */
-#saveModal .modal-content {
-    background: var(--dwb-surface);
-    border: 1px solid var(--dwb-border);
-}
-#saveModal .modal-header { border-bottom: 1px solid var(--dwb-border); }
-#saveModal .form-label { font-size: 12px; color: var(--dwb-muted); }
-#saveModal .form-control, #saveModal .form-control:focus {
-    background: #111128;
-    border-color: var(--dwb-border);
-    color: var(--dwb-text);
-    box-shadow: none;
-}
-#save-result-box {
-    background: rgba(78,154,241,.1);
-    border: 1px solid var(--dwb-accent);
-    border-radius: 6px;
-    padding: 10px 12px;
-    font-size: 12px;
-    word-break: break-all;
-}
-#save-result-box a { color: var(--dwb-accent); }
-
-/* ── Utilities ─────────────────────────────────────────── */
-.text-muted-dwb { color: var(--dwb-muted) !important; }
-</style>
 </head>
 <body>
 
@@ -589,8 +270,7 @@ body {
                     <button class="panel-menu-btn"
                             data-bs-toggle="dropdown" aria-expanded="false"
                             title="Panel options">⋮</button>
-                    <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark"
-                        style="font-size:12px;min-width:160px;">
+                    <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
                         <li><button class="dropdown-item"
                                     onclick="DWB.setPanelSpan(<?= $i ?>, 1, 0)">
                             ⟶ Wider
@@ -753,10 +433,10 @@ body {
                            id="save-device-id" maxlength="255"
                            placeholder="Torque device ID (optional)">
                 </div>
-                <div id="save-result-box" style="display:none;"></div>
-                <div id="save-error" class="text-danger mt-2" style="display:none;font-size:12px;"></div>
+                <div id="save-result-box" class="hidden"></div>
+                <div id="save-error" class="text-danger mt-2 hidden"></div>
             </div>
-            <div class="modal-footer" style="border-top:1px solid var(--dwb-border);">
+            <div class="modal-footer">
                 <button type="button" class="btn btn-secondary btn-sm"
                         data-bs-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-warning btn-sm" id="btn-save-dashboard">
@@ -811,8 +491,8 @@ body {
 
 <!-- ════════════════════════════════════════════════════════════════ SCRIPTS -->
 <script src="static/js/bootstrap.bundle.min.js"></script>
-<script src="static/js/chosen.jquery.min.js"></script>
 <script src="static/js/jquery.min.js"></script>
+<script src="static/js/chosen.jquery.min.js"></script>
 <script src="static/js/peity.min.js"></script>
 <script src="static/js/uplot.min.js"></script>
 
@@ -863,18 +543,7 @@ const DWB = (() => {
             return;
         }
 
-        // Re-read current panel state from live DOM (this fixes the reset bug)
-        const currentPanels = [];
-        document.querySelectorAll('.dwb-panel').forEach(panel => {
-            const idx = Number(panel.dataset.panelIdx);
-            const sel = panel.querySelector('.panel-sensor-select');
-            currentPanels[idx] = {
-                sensor: sel ? sel.value : '',
-                cs: Number(panel.dataset.cs || 1),
-                rs: Number(panel.dataset.rs || 1)
-            };
-        });
-
+        const currentPanels = getCurrentPanelState();
         window.location = buildUrl(sid, GRID_PARAM, currentPanels);
     }
 
@@ -882,21 +551,36 @@ const DWB = (() => {
     function setGrid(preset) {
         const [r, c] = preset.split('x').map(Number);
         const cap    = r * c;
-        const keep   = PANELS_INIT.slice(0, cap);
+        const keep   = getCurrentPanelState().slice(0, cap);
         while (keep.length < cap) keep.push({ sensor: '', cs: 1, rs: 1 });
         window.location = buildUrl(SESSION_ID, preset, keep);
     }
 
+    /** Read current panel state from the DOM */
+    function getCurrentPanelState() {
+        const panels = [];
+        document.querySelectorAll('.dwb-panel').forEach(panel => {
+            const idx  = Number(panel.dataset.panelIdx);
+            const sel  = panel.querySelector('.panel-sensor-select');
+            panels[idx] = {
+                sensor: sel ? sel.value : '',
+                cs: Number(panel.dataset.cs || 1),
+                rs: Number(panel.dataset.rs || 1),
+            };
+        });
+        return panels;
+    }
+
     /** Change sensor for one panel */
     function setPanelSensor(idx, key) {
-        const arr = PANELS_INIT.map(p => Object.assign({}, p));
+        const arr = getCurrentPanelState();
         arr[idx].sensor = key;
         window.location = buildUrl(SESSION_ID, GRID_PARAM, arr);
     }
 
     /** Adjust colspan / rowspan of a panel by delta */
     function setPanelSpan(idx, dcs, drs) {
-        const arr = PANELS_INIT.map(p => Object.assign({}, p));
+        const arr = getCurrentPanelState();
         arr[idx].cs = Math.max(1, Math.min(GRID_COLS, arr[idx].cs + dcs));
         arr[idx].rs = Math.max(1, Math.min(GRID_ROWS, arr[idx].rs + drs));
         window.location = buildUrl(SESSION_ID, GRID_PARAM, arr);
@@ -904,14 +588,14 @@ const DWB = (() => {
 
     /** Clear sensor from a panel */
     function clearPanel(idx) {
-        const arr = PANELS_INIT.map(p => Object.assign({}, p));
+        const arr = getCurrentPanelState();
         arr[idx].sensor = '';
         window.location = buildUrl(SESSION_ID, GRID_PARAM, arr);
     }
 
     /** Add sensor to next empty panel */
     function addSensorToNextPanel(key) {
-        const arr = PANELS_INIT.map(p => Object.assign({}, p));
+        const arr = getCurrentPanelState();
         const free = arr.findIndex(p => !p.sensor);
         if (free === -1) {
             alert('All panels are occupied. Clear a panel first.');
@@ -1257,9 +941,7 @@ function initLeaflet() {
                 `✅ Dashboard saved!<br>
                  <strong>Slug:</strong> <code>${json.slug}</code><br>
                  <strong>Link:</strong> <a href="${abs}" target="_blank">${abs}</a>
-                 <button type="button" style="margin-left:8px;font-size:11px;
-                         padding:1px 6px;border-radius:4px;border:1px solid #4e9af1;
-                         background:transparent;color:#4e9af1;cursor:pointer;"
+                 <button type="button" class="copy-button"
                          onclick="navigator.clipboard.writeText('${abs}')
                                   .then(()=>this.textContent='Copied!')
                                   .catch(()=>{})">

@@ -271,6 +271,14 @@ CREATE TABLE saved_dashboards (
 3. `d.php` (slug resolver)
 4. Updates to `dashboard.php` (⭐ Save button + modal)
 
+---
+
+## 2026-05-01 Update
+
+- Stabilized session selection in `dashboard.php` so changing sensors now preserves the current session and panel state.
+- Updated dashboard JS builders to read live DOM panel configuration before rebuilding URLs.
+- Removed embedded dashboard CSS from `dashboard.php` and centralized styles in `static/css/dashboard.css`.
+
 #### SavedDashboardRepository (`includes/Data/SavedDashboardRepository.php`)
 
 **Key methods**:

@@ -218,6 +218,13 @@ Step 6 — Cleanup
   Delete old procedural files
 ```
 
+## Recent Fixes
+
+### 2026-05-01
+- Fixed `dashboard.php` session and sensor selection state handling so the selected session remains active when changing panel sensors.
+- Reworked dashboard client-side URL state builders to preserve live panel configuration from the DOM.
+- Extracted dashboard inline styles into `static/css/dashboard.css` and removed the large embedded `<style>` block from `dashboard.php`.
+
 ---
 
 ## Schema Migration

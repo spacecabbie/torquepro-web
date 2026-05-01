@@ -600,7 +600,148 @@ body {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--dwb-muted);
 }
+/* ── Additional dashboard styles imported from dashboard.php ───────────────────────────────────────────────── */
+.grid-pill {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    border: 1px solid var(--dwb-border);
+    background: transparent;
+    color: var(--dwb-muted);
+    cursor: pointer;
+    transition: background .15s, color .15s;
+    white-space: nowrap;
+}
+.grid-pill:hover,
+.grid-pill.active {
+    background: var(--dwb-accent);
+    border-color: var(--dwb-accent);
+    color: #fff;
+}
 
+.panel-menu-btn {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: var(--dwb-muted);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 2px;
+    border-radius: 4px;
+}
+.panel-menu-btn:hover {
+    color: var(--dwb-text);
+    background: rgba(255,255,255,.07);
+}
+
+.panel-empty {
+    text-align: center;
+    color: var(--dwb-muted);
+}
+.panel-empty .empty-icon {
+    font-size: 28px;
+    margin-bottom: 6px;
+}
+.panel-empty p {
+    font-size: 11px;
+    margin: 0;
+}
+
+.panel-spinner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    color: var(--dwb-muted);
+    font-size: 11px;
+}
+
+#summary-pagination {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--dwb-muted);
+}
+#summary-pagination button {
+    background: var(--dwb-surface);
+    border: 1px solid var(--dwb-border);
+    color: var(--dwb-text);
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-size: 12px;
+}
+#summary-pagination button:disabled {
+    opacity: .35;
+    cursor: default;
+}
+
+.dropdown-menu.dropdown-menu-end.dropdown-menu-dark {
+    font-size: 12px;
+    min-width: 160px;
+}
+
+.modal-footer {
+    border-top: 1px solid var(--dwb-border);
+}
+
+#save-result-box {
+    background: rgba(78,154,241,.1);
+    border: 1px solid var(--dwb-accent);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 12px;
+    word-break: break-all;
+}
+#save-result-box a {
+    color: var(--dwb-accent);
+}
+
+#save-error {
+    font-size: 12px;
+}
+
+.hidden {
+    display: none !important;
+}
+
+.copy-button {
+    margin-left: 8px;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--dwb-accent);
+    background: transparent;
+    color: var(--dwb-accent);
+    cursor: pointer;
+}
+
+.copy-button:hover {
+    background: rgba(78,154,241,.15);
+}
+
+.text-muted-dwb {
+    color: var(--dwb-muted) !important;
+}
+
+.btn-add-panel {
+    padding: 1px 6px;
+    font-size: 11px;
+    border-radius: 4px;
+    border: 1px solid var(--dwb-border);
+    background: transparent;
+    color: var(--dwb-muted);
+    cursor: pointer;
+    transition: background .15s, color .15s;
+}
+.btn-add-panel:hover {
+    background: var(--dwb-accent);
+    border-color: var(--dwb-accent);
+    color: #fff;
+}
 /* ── Responsive Breakpoints ─────────────────────────────────────────── */
 @media (max-width: 1200px) {
     #panel-grid {
