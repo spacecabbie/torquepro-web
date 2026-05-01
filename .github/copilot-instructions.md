@@ -56,6 +56,10 @@ References:
 - https://www.php-fig.org/psr/psr-12/
 - https://www.php-fig.org/ (full PSR index)
 
+Before any changes — Read the full content of history.md and PROGRESS.md.
+
+After fixes — Update history.md and PROGRESS.md with a clear summary of what was changed.
+
 ---
 
 ## OOP Migration Path
