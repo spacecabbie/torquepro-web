@@ -1,0 +1,33 @@
+# GitHub Pages Configuration for Torque Pro Web Logger Documentation
+# Theme: just-the-docs (clean, professional technical documentation theme)
+
+title: Torque Pro Web Logger
+description: Documentation for the modern Torque Pro web logger — a complete rewrite with normalized schema and decoupled architecture.
+baseurl: "/torquepro-web"
+url: "https://spacecabbie.github.io"
+
+# Theme
+theme: just-the-docs
+
+# Navigation
+nav_sort: case_insensitive
+nav_external_links:
+  - title: GitHub Repository
+    url: https://github.com/spacecabbie/torquepro-web
+    hide_icon: false
+  - title: Main README
+    url: https://github.com/spacecabbie/torquepro-web/blob/main/README.md
+    hide_icon: false
+
+# Footer
+footer_content: "Documentation for the Torque Pro Web Logger. Built with transparency and modern PHP practices."
+
+# Search
+search_enabled: true
+
+# Color scheme (optional - can be customized later)
+color_scheme: dark
+
+# Plugins (GitHub Pages supports these by default)
+plugins:
+  - jekyll-seo-tag
