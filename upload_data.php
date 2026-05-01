@@ -7,6 +7,14 @@ declare(strict_types=1);
  * Receives sensor data from the Torque Pro Android app via HTTP GET,
  * validates and persists it to the normalized schema.
  *
+ * IMPORTANT DESIGN:
+ * - This file is intentionally thin: it only receives the request,
+ *   writes the raw payload to upload_requests_raw (audit),
+ *   and then calls the parser with ONLY the raw_upload_id.
+ * - The parser (parser.php) fetches the original query string from the
+ *   database and performs all business logic itself.
+ * - No upload data is ever passed from upload_data.php to the parser.
+ *
  * Schema overview:
  * - sessions               One row per drive session
  * - sensors                Master registry of all k* sensor keys
@@ -28,7 +36,7 @@ declare(strict_types=1);
  * Audit:  All uploads logged to upload_requests_raw before business-logic transaction.
  * Safety: All queries use PDO prepared statements; column names are never interpolated.
  *
- * Origin: upload_data.php (rewritten for normalized schema)
+ * Origin: upload_data.php (rewritten for normalized schema + decoupled parser)
  */
 
 require_once __DIR__ . '/includes/config.php';
@@ -110,7 +118,11 @@ if ($sessionId === null) {
 }
 
 try {
-    parseTorqueData($_GET, $sessionId, $deviceId, $timestamp, $eml, $profileName, $rawUploadId, $startTime);
+    // IMPORTANT: upload_data.php does NOT pass any upload data to the parser.
+    // It only persists the raw request to upload_requests_raw, then calls the
+    // parser with the raw_upload_id. The parser fetches the original query string
+    // from the database and performs all business logic itself.
+    parseTorqueData($rawUploadId);
 
 } catch (Throwable $e) {
     if ($pdo->inTransaction()) {

@@ -5,7 +5,10 @@ declare(strict_types=1);
  * parser.php — Parsing logic for Torque upload data.
  *
  * Contains the business logic to parse and store sensor data from Torque uploads.
- * Called by upload_data.php after saving raw data.
+ * Called by upload_data.php after saving raw data to upload_requests_raw.
+ *
+ * This version sources all input from the database (raw_upload_id only).
+ * No upload data is passed from upload_data.php.
  */
 
 require_once __DIR__ . '/includes/config.php';
@@ -29,7 +32,6 @@ function normalizeTorqueMetadataValue(mixed $value): ?string
                 return (string)$candidate;
             }
         }
-
         return null;
     }
 
@@ -38,27 +40,43 @@ function normalizeTorqueMetadataValue(mixed $value): ?string
     }
 
     $normalized = trim((string)$value);
-
     return $normalized === '' ? null : $normalized;
 }
 
 /**
  * Parse and store Torque upload data.
  *
- * @param array $params The parsed GET parameters from the upload.
- * @param string|null $sessionId The session ID.
- * @param string|null $deviceId The device ID.
- * @param int $timestamp The timestamp.
- * @param string|null $eml Email.
- * @param string|null $profileName Profile name.
- * @param int $rawUploadId The raw upload ID.
- * @param int $startTime The start time in nanoseconds.
+ * @param int $rawUploadId The ID of the row in upload_requests_raw to process.
  * @return void
  * @throws \PDOException On database errors.
  */
-function parseTorqueData(array $params, ?string $sessionId, ?string $deviceId, int $timestamp, ?string $eml, ?string $profileName, int $rawUploadId, int $startTime): void
+function parseTorqueData(int $rawUploadId): void
 {
     $pdo = Connection::get();
+
+    // Fetch the raw request row (contains raw_query_string, device_id, session_id, etc.)
+    $stmtRaw = $pdo->prepare("
+        SELECT id, raw_query_string, device_id, session_id, ip
+        FROM upload_requests_raw
+        WHERE id = :id
+    ");
+    $stmtRaw->execute([':id' => $rawUploadId]);
+    $rawRow = $stmtRaw->fetch(\PDO::FETCH_ASSOC);
+
+    if (!$rawRow || empty($rawRow['raw_query_string'])) {
+        return; // Nothing to process
+    }
+
+    // Reconstruct the original $_GET parameters from the stored query string
+    parse_str($rawRow['raw_query_string'], $params);
+
+    // Re-extract the values that were previously passed in; they are all in $params
+    $sessionId   = $params['session'] ?? $rawRow['session_id'] ?? null;
+    $deviceId    = $rawRow['device_id'] ?? (isset($params['id']) ? md5($params['id']) : null);
+    $timestamp   = (int)($params['time'] ?? 0);
+    $eml         = $params['eml'] ?? null;
+    $profileName = $params['profileName'] ?? null;
+    $startTime   = hrtime(true); // Start timing inside parser (pure business-logic time)
 
     $pdo->beginTransaction();
 
@@ -144,9 +162,7 @@ function parseTorqueData(array $params, ?string $sessionId, ?string $deviceId, i
 
     $unitTypeStmt = $pdo->query("SELECT id, unit_key FROM unit_types");
     $unitKeyToId  = [];
-    foreach ($unitTypeStmt->fetchAll(
-        \PDO::FETCH_ASSOC
-    ) as $row) {
+    foreach ($unitTypeStmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
         $unitKeyToId[$row['unit_key']] = (int) $row['id'];
     }
 
