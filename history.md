@@ -613,6 +613,35 @@ Leaflet only loaded when modal opens:
 
 ---
 
+## Upload Processing Refactor
+
+**Date**: May 1, 2026  
+**Changes**: Split `upload_data.php` into `upload_data.php` and `parser.php`, rewrote `reprocess.php` as web interface.
+
+### File Split: upload_data.php → upload_data.php + parser.php
+
+**Rationale**: Separate upload handling from parsing logic for better maintainability.
+
+- `upload_data.php`: Handles Torque Pro upload requests, saves to `upload_requests_raw`, calls `parser.php` for processing.
+- `parser.php`: Contains `parseTorqueData()` function with all parsing and database insertion logic.
+
+**No code changes** — only moved existing logic into a function.
+
+### Reprocess Rewrite: CLI → Web Interface
+
+**Rationale**: Convert `reprocess.php` from CLI-only to authenticated web page for easier access.
+
+- Added `Auth::checkBrowser()` for authentication.
+- `?resetdb`: Empties `sessions`, `sensors`, `sensor_readings`, `gps_points`, `upload_requests_processed` (keeps `upload_requests_raw`).
+- `?reprocess`: Reprocesses all unprocessed raw rows.
+  - First 25: Shows log, asks for confirmation.
+  - With `confirm=all`: Processes all remaining in batches of 25 with progress output.
+- Throttled processing to prevent timeouts on large datasets.
+
+**Future**: Link reset/reprocess buttons to `dashboard.php` or `admin.php`.
+
+---
+
 ## Summary
 
 The Torque Logs project underwent a complete modernization:

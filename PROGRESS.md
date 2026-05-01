@@ -639,6 +639,28 @@ Done. You may delete this file or keep it — it is safe to re-run.
 
 ---
 
+## Post-Build Refactor
+
+**Date**: May 1, 2026  
+**Focus**: Upload processing architecture and admin tools.
+
+### Upload Data Split
+
+- Split `upload_data.php` into upload handling (`upload_data.php`) and parsing logic (`parser.php`).
+- `parser.php` contains `parseTorqueData()` function for reusable parsing.
+- No functional changes; improved separation of concerns.
+
+### Reprocess Web Interface
+
+- Converted `reprocess.php` from CLI-only to authenticated web page.
+- Added database reset function (`?resetdb`) that empties processed tables except raw audit.
+- Added reprocess function (`?reprocess`) with preview (first 25) and batched full processing.
+- Throttled for large datasets; authenticated access only.
+
+**Next steps**: Integrate reset/reprocess buttons into dashboard UI.
+
+---
+
 **Document generated**: April 29, 2026  
-**Last updated**: After final htmlspecialchars fix (`2e3aba3`)  
+**Last updated**: May 1, 2026 (upload refactor)  
 **Maintainer notes**: All code follows PSR-12 style. Future changes should preserve the typed, OOP structure. See `.github/copilot-instructions.md` for coding standards.
