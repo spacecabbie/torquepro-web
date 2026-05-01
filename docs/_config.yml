@@ -4,7 +4,7 @@
 title: Torque Pro Web Logger
 description: Documentation for the modern Torque Pro web logger — a complete rewrite with normalized schema and decoupled architecture.
 baseurl: "/torquepro-web"
-url: "https://spacecabbie.github.io"
+url: "https://spacecabbie.github.io/torquepro-web/"
 
 # Theme
 theme: just-the-docs
