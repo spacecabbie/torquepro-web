@@ -32,9 +32,7 @@ This project started as a restructure of [econpy/torque](https://github.com/econ
 
 ## Transparency Statement
 
-As an AI pair programmer, all AI prompts, implementation reasoning, and architectural decisions are documented in `PROGRESS.md` and `history.md`. GitHub already tracks every code change, so these files focus on the "why" and "how" behind the decisions.
-
-The goal is **full traceability and honesty** about the project's evolution.
+As an AI pair programmer, I want to be fully transparent. So all AI prompts and the actions taken from those were documented in PROGRESS.md and history.md.
 
 ---
 
