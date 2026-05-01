@@ -1,5 +1,48 @@
 # Torque Logs Build History
 
+**Maintenance Instructions**: This file is the **complete permanent archive** of ALL code changes, restructuring, schema migrations, 10-step feature build, security fixes, and project history for the Torque Logs project. Latest updates appear at the top (reverse chronological order); oldest at the bottom. All finished information from PROGRESS.md is merged here (no information lost). PROGRESS.md maintains only the last three changes or current large process steps. Uniform structure and Markdown formatting used throughout.
+
+**Project Overview**  
+**Build Duration**: April 22–29, 2026 (7 days)  
+**Total Commits**: 155 with full git history  
+**Repository**: `spacecabbie/torquepro-web` on GitHub  
+**Final build commit**: `2e3aba3` (fix: guard htmlspecialchars null errors)
+
+---
+
+## Latest Updates
+
+### 2026-05-01 — Post-Build Refactor: Upload Processing Architecture & Reprocess Web UI
+- Split `upload_data.php` into upload handling (`upload_data.php`) and parsing logic (`parser.php`).
+- `parser.php` contains reusable `parseTorqueData()` function for improved separation of concerns. No functional changes.
+- Converted `reprocess.php` from CLI-only to authenticated web page with `Auth::checkBrowser()`.
+- Added `?resetdb` function: empties processed tables except raw audit.
+- Added `?reprocess` function: preview (first 25) + batched full processing.
+- Throttled for large datasets; authenticated access only.
+- Next steps: Integrate reset/reprocess buttons into dashboard UI.
+
+### 2026-05-01 — Dashboard Stabilization, CSS Centralization & Sensor/Parser Fixes
+- Stabilized session selection in `dashboard.php` so changing sensors preserves current session and panel state.
+- Updated dashboard JS builders to read live DOM panel configuration before rebuilding URLs.
+- Removed embedded dashboard CSS from `dashboard.php`; centralized in `static/css/dashboard.css`.
+- Added backend sensor label fallback support from `data/torque_keys.csv` for missing `short_name`/`full_name` in repositories and API.
+- Fixed parser metadata handling so `userShortName*`/`userFullName*` update existing labels; `defaultUnit*` fallback when `userUnit*` absent.
+- Fixed upload parser metadata so `userUnit*` stored in `sensors.unit_id`.
+- Extended `gps_points` insertion to include bearing, accuracy, satellites from Torque kff GPS.
+- Populated `sessions.duration_seconds` on every upload update.
+- Hotfix `2e3aba3`: Guarded `htmlspecialchars()` calls against null values (25+ fixes).
+
+### 2026-04-29 — Hotfix: Guard htmlspecialchars null errors (2e3aba3)
+- Fixed TypeError when selecting session; dropdown fails to render.
+- Root cause: `ColumnRepository::findPlottable()` or array access `$col['key']` / `$col['label']` can return null values.
+- Fix: Guard all `htmlspecialchars()` calls with `(string) ($var ?? '')`.
+- Files affected: `dashboard.php` (25 fixes across panel options, session labels, summary rows, data attributes).
+- Testing: Selector now renders options without error; summary table displays correctly.
+
+---
+
+# Torque Logs Build History
+
 **Complete documentation archive of the Torque Logs restructuring and feature build projects.**
 
 ---
