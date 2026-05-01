@@ -165,7 +165,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
 <link rel="stylesheet" href="static/css/bootstrap.min.css">
 <link rel="stylesheet" href="static/css/chosen.min.css">
 <link rel="stylesheet" href="static/css/uplot.min.css">
-<style>
+<link rel="stylesheet" href="static/css/dashboard.css">
 /* ── Colour tokens ─────────────────────────────────────── */
 :root {
     --dwb-bg:      #0d0d1a;
