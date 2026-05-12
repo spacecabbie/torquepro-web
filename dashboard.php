@@ -246,7 +246,8 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
         </a>
 
         <?php if ($hasSession && count($geolocs) > 0): ?>
-        <button class="btn btn-sm btn-outline-secondary"
+        <button id="btn-map"
+                class="btn btn-sm btn-outline-secondary"
                 data-toggle="modal" data-target="#mapModal">
             🗺 Map
         </button>
@@ -898,10 +899,12 @@ function initSummaryPagination() {
 let leafletLoaded  = false;
 let leafletMap     = null;
 
-document.getElementById('mapModal')?.addEventListener('shown.bs.modal', () => {
-    if (leafletLoaded) return;
+function ensureLeafletLoaded() {
+    if (leafletLoaded) {
+        refreshLeafletMap();
+        return;
+    }
     leafletLoaded = true;
-
     const cssL = document.createElement('link');
     cssL.rel   = 'stylesheet';
     cssL.href  = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
@@ -910,12 +913,29 @@ document.getElementById('mapModal')?.addEventListener('shown.bs.modal', () => {
     const jsL    = document.createElement('script');
     jsL.src      = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
     jsL.onload   = () => initLeaflet();
+    jsL.onerror  = () => showMapError('Map library could not be loaded.');
     document.head.appendChild(jsL);
-});
+}
+
+if (typeof jQuery !== 'undefined') {
+    jQuery('#mapModal')
+        .on('shown.bs.modal', ensureLeafletLoaded)
+        .on('hide.bs.modal', function () {
+            if (this.contains(document.activeElement)) {
+                document.activeElement.blur();
+            }
+        })
+        .on('hidden.bs.modal', function () {
+            document.getElementById('btn-map')?.focus();
+        });
+}
 
 function initLeaflet() {
     const pts = GEO_POINTS.map(p => [p.lat, p.lon]);
-    if (pts.length === 0) return;
+    if (pts.length === 0) {
+        showMapError('No GPS points available for this session.');
+        return;
+    }
 
     leafletMap = L.map('map');
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -927,6 +947,24 @@ function initLeaflet() {
     L.marker(pts[0], { title: 'Start' }).addTo(leafletMap);
     L.marker(pts[pts.length - 1], { title: 'End' }).addTo(leafletMap);
     leafletMap.fitBounds(poly.getBounds(), { padding: [20, 20] });
+    refreshLeafletMap();
+}
+
+function refreshLeafletMap() {
+    if (!leafletMap) return;
+    window.setTimeout(() => {
+        leafletMap.invalidateSize();
+        const pts = GEO_POINTS.map(p => [p.lat, p.lon]);
+        if (pts.length > 0) {
+            leafletMap.fitBounds(L.latLngBounds(pts), { padding: [20, 20] });
+        }
+    }, 80);
+}
+
+function showMapError(message) {
+    const map = document.getElementById('map');
+    if (!map) return;
+    map.innerHTML = `<div class="panel-empty"><div class="empty-icon">⚠</div><p>${message}</p></div>`;
 }
 <?php endif; ?>
 

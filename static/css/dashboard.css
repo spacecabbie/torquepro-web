@@ -707,6 +707,15 @@ body {
 }
 
 /* ── Leaflet Map Overrides ───────────────────────────────────────────── */
+#map {
+    width: 100%;
+    height: min(70vh, 640px);
+    min-height: 420px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #0d0d1a;
+}
+
 .leaflet-container {
     background: #0d0d1a !important;
 }
