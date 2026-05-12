@@ -223,18 +223,17 @@ PARTITION BY RANGE (TO_DAYS(upload_date)) (
 -- Processed upload summary (links to raw data)
 CREATE TABLE upload_requests_processed (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  raw_upload_id BIGINT UNSIGNED NOT NULL COMMENT 'Links to upload_requests_raw.id',
+  raw_upload_id BIGINT UNSIGNED NOT NULL COMMENT 'Logical link to upload_requests_raw.id',
   session_id VARCHAR(32) NOT NULL,
   data_timestamp BIGINT DEFAULT NULL COMMENT 'Data point timestamp from Torque (Unix ms)',
   sensor_count SMALLINT UNSIGNED DEFAULT 0 COMMENT 'Number of sensor values in request',
   new_sensors SMALLINT UNSIGNED DEFAULT 0 COMMENT 'Number of new sensors registered',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_raw (raw_upload_id),
+  UNIQUE KEY uq_raw_upload (raw_upload_id),
   INDEX idx_session (session_id),
-  FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
-  FOREIGN KEY (raw_upload_id) REFERENCES upload_requests_raw(id) ON DELETE CASCADE
+  FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  COMMENT='Processed upload summary (linked to raw audit log)';
+  COMMENT='Processed upload summary (logically linked to raw audit log)';
 
 SET FOREIGN_KEY_CHECKS = 1;
 

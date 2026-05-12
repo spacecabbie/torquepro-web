@@ -203,23 +203,23 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
     <div class="topbar-right">
         <?php if ($hasSession && count($geolocs) > 0): ?>
         <button class="btn btn-sm btn-outline-secondary"
-                data-bs-toggle="modal" data-bs-target="#mapModal">
+                data-toggle="modal" data-target="#mapModal">
             🗺 Map
         </button>
         <?php endif; ?>
 
         <?php if ($hasSession): ?>
         <button class="btn btn-sm btn-outline-warning"
-                data-bs-toggle="modal" data-bs-target="#saveModal"
+                data-toggle="modal" data-target="#saveModal"
                 title="Save this dashboard layout">
             ⭐ Save
         </button>
-        <a href="export.php?id=<?= urlencode($session_id) ?>&format=csv"
+        <a href="export.php?sid=<?= urlencode($session_id) ?>&filetype=csv"
            class="btn btn-sm btn-outline-secondary">
             ⬇ CSV
         </a>
         <button class="btn btn-sm btn-outline-secondary"
-                data-bs-toggle="modal" data-bs-target="#actionsModal">
+                data-toggle="modal" data-target="#actionsModal">
             ⋮
         </button>
         <?php endif; ?>
@@ -268,7 +268,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
                 <!-- ⋮ panel menu -->
                 <div class="dropdown">
                     <button class="panel-menu-btn"
-                            data-bs-toggle="dropdown" aria-expanded="false"
+                            data-toggle="dropdown" aria-expanded="false"
                             title="Panel options">⋮</button>
                     <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
                         <li><button class="dropdown-item"
@@ -383,12 +383,12 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
 <!-- ═══════════════════════════════════════════════════════ MAP MODAL -->
 <?php if ($hasSession && count($geolocs) > 0): ?>
 <div class="modal fade" id="mapModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-xl modal-dialog-centered">
+    <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">GPS Track</h5>
-                <button type="button" class="btn-close btn-close-white"
-                        data-bs-dismiss="modal"></button>
+                <button type="button" class="close" data-dismiss="modal"
+                        aria-label="Close"><span aria-hidden="true">&times;</span></button>
             </div>
             <div class="modal-body">
                 <div id="map"></div>
@@ -402,11 +402,11 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
 <?php if ($hasSession): ?>
 <div class="modal fade" id="saveModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog">
-        <div class="modal-content" id="saveModal">
+        <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">⭐ Save dashboard</h5>
-                <button type="button" class="btn-close btn-close-white"
-                        data-bs-dismiss="modal"></button>
+                <button type="button" class="close" data-dismiss="modal"
+                        aria-label="Close"><span aria-hidden="true">&times;</span></button>
             </div>
             <div class="modal-body">
                 <div class="mb-3">
@@ -438,7 +438,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary btn-sm"
-                        data-bs-dismiss="modal">Cancel</button>
+                        data-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-warning btn-sm" id="btn-save-dashboard">
                     Save &amp; get link
                 </button>
@@ -455,8 +455,8 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">Session actions</h5>
-                <button type="button" class="btn-close btn-close-white"
-                        data-bs-dismiss="modal"></button>
+                <button type="button" class="close" data-dismiss="modal"
+                        aria-label="Close"><span aria-hidden="true">&times;</span></button>
             </div>
             <div class="modal-body">
                 <!-- Delete -->
@@ -490,10 +490,10 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
 <?php endif; ?>
 
 <!-- ════════════════════════════════════════════════════════════════ SCRIPTS -->
-<script src="static/js/bootstrap.bundle.min.js"></script>
 <script src="static/js/jquery.min.js"></script>
+<script src="static/js/bootstrap.min.js"></script>
 <script src="static/js/chosen.jquery.min.js"></script>
-<script src="static/js/peity.min.js"></script>
+<script src="static/js/jquery.peity.min.js"></script>
 <script src="static/js/uplot.min.js"></script>
 
 <script>
@@ -663,11 +663,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initSummaryPagination();
 });
 
-// Ensure charts only init when we have a valid session + small delay after Chosen.js (FIXED)
-if (SESSION_ID) {
-    setTimeout(initAllPanels, 200);
-}
-
 /* ── Summary pagination ─────────────────────────────────────────────────── */
 function initSummaryPagination() {
     const tbody    = document.getElementById('summary-tbody');
@@ -722,7 +717,7 @@ document.getElementById('mapModal')?.addEventListener('shown.bs.modal', () => {
 });
 
 function initLeaflet() {
-    const pts = GEO_POINTS.map(p => [p.lat, p.lng]);
+    const pts = GEO_POINTS.map(p => [p.lat, p.lon]);
     if (pts.length === 0) return;
 
     leafletMap = L.map('map');

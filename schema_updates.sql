@@ -18,7 +18,13 @@ ALTER TABLE sensors
 -- (Uncomment if you see slow dashboard queries)
 -- CREATE INDEX idx_sensor_session_ts ON sensor_readings (sensor_key, session_id, timestamp);
 
--- 4. (Optional) Unit alias table for future extensibility
+-- 4. Ensure reprocessing updates an existing processed-upload row instead of
+-- inserting duplicates. If this fails on an existing database, remove duplicate
+-- raw_upload_id rows first and re-run it.
+ALTER TABLE upload_requests_processed
+    ADD UNIQUE KEY uq_raw_upload (raw_upload_id);
+
+-- 5. (Optional) Unit alias table for future extensibility
 CREATE TABLE IF NOT EXISTS unit_aliases (
     alias VARCHAR(32) PRIMARY KEY,
     canonical_unit_key VARCHAR(16) NOT NULL,
@@ -28,8 +34,7 @@ CREATE TABLE IF NOT EXISTS unit_aliases (
 
 -- Example aliases (extend as needed)
 INSERT IGNORE INTO unit_aliases (alias, canonical_unit_key) VALUES
-('°', 'celsius'),
-('deg', 'celsius'),
-('kph', 'kmh'),
-('l/100km', 'l100km'),
-('mpg (uk)', 'mpg_uk');
+('deg c', 'celsius'),
+('deg f', 'fahrenheit'),
+('deg', 'degree'),
+('kph', 'kmh');
