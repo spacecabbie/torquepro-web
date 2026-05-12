@@ -83,7 +83,7 @@ body {
 }
 
 #dwb-topbar .chosen-single span {
-    color: #000000 !important;
+    color: var(--dwb-text) !important;
 }
 
 #dwb-topbar .chosen-single div {
@@ -117,8 +117,13 @@ body {
 
 #dwb-topbar .chosen-results li.highlighted {
     background: #4e9af1 !important;
-    color: #000 !important;
+    color: #0d0d1a !important;
     font-weight: 600 !important;
+}
+
+#dwb-topbar .chosen-results li.result-selected {
+    color: #ffffff !important;
+    background: #18243a !important;
 }
 
 #dwb-topbar .chosen-results li.group-result {
@@ -181,6 +186,99 @@ body {
     flex: 1;
     overflow-y: auto;
     padding: 16px;
+}
+
+.sync-inspector {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    background: #121225;
+    border: 1px solid var(--dwb-border);
+    border-radius: 8px;
+    color: var(--dwb-text);
+}
+
+.sync-inspector.is-pinned {
+    border-color: var(--dwb-accent);
+    box-shadow: 0 0 0 1px rgba(78, 154, 241, 0.25);
+}
+
+.sync-inspector[hidden] {
+    display: none;
+}
+
+.sync-inspector-time {
+    flex: 0 0 auto;
+    min-width: 140px;
+    color: var(--dwb-accent);
+    font-family: Consolas, Menlo, monospace;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.sync-inspector-values {
+    display: flex;
+    flex: 1;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+}
+
+.sync-inspector-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    max-width: 260px;
+    padding: 3px 7px;
+    background: #0d0d1a;
+    border: 1px solid var(--dwb-border);
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.sync-inspector-label {
+    overflow: hidden;
+    color: var(--dwb-muted);
+    text-overflow: ellipsis;
+}
+
+.sync-inspector-value {
+    color: #ffffff;
+    font-family: Consolas, Menlo, monospace;
+    font-weight: 600;
+}
+
+.sync-inspector-unit,
+.sync-inspector-delta {
+    color: var(--dwb-muted);
+    font-size: 11px;
+}
+
+.sync-inspector-chip.is-stale {
+    border-color: #8a6d3b;
+}
+
+.sync-inspector-chip.is-missing {
+    opacity: 0.72;
+}
+
+.sync-inspector-clear {
+    flex: 0 0 auto;
+    padding: 3px 8px;
+    background: transparent;
+    border: 1px solid var(--dwb-border);
+    border-radius: 4px;
+    color: var(--dwb-text);
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.sync-inspector-clear:hover {
+    border-color: var(--dwb-accent);
+    color: var(--dwb-accent);
 }
 
 /* ── CSS Grid Panel System ───────────────────────────────────────────── */
@@ -266,6 +364,73 @@ body {
     color: #ffffff !important;
 }
 
+.panel-add-sensor {
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--dwb-border);
+    border-radius: 4px;
+    background: rgba(78, 154, 241, 0.12);
+    color: var(--dwb-text);
+    font-size: 18px;
+    line-height: 1;
+    flex: 0 0 auto;
+    cursor: pointer;
+}
+
+.panel-add-sensor:hover,
+.panel-add-sensor:focus {
+    border-color: var(--dwb-accent);
+    background: rgba(78, 154, 241, 0.22);
+    outline: none;
+}
+
+.panel-sensor-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--dwb-border);
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.panel-sensor-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 100%;
+    min-height: 24px;
+    padding: 3px 7px;
+    border: 1px solid rgba(139, 151, 168, 0.35);
+    border-radius: 4px;
+    background: rgba(13, 13, 26, 0.82);
+    color: var(--dwb-text);
+    font-size: 11px;
+    line-height: 1.2;
+    cursor: pointer;
+}
+
+.panel-sensor-chip span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.panel-sensor-chip small {
+    color: var(--dwb-muted);
+    font-size: 10px;
+}
+
+.panel-sensor-chip b {
+    color: var(--dwb-muted);
+    font-size: 13px;
+}
+
+.panel-sensor-chip:hover,
+.panel-sensor-chip:focus {
+    border-color: var(--dwb-accent);
+    outline: none;
+}
+
 .panel-menu {
     position: relative;
 }
@@ -327,6 +492,14 @@ body {
     min-height: 250px;
     overflow: hidden;
     position: relative;
+}
+
+.panel-chart-area .u-over {
+    cursor: crosshair;
+}
+
+.panel-chart-area .u-over.is-panning {
+    cursor: grabbing;
 }
 
 .panel-message {
@@ -617,6 +790,16 @@ body {
     background: var(--dwb-accent);
     border-color: var(--dwb-accent);
     color: #fff;
+}
+
+.sync-pill {
+    min-width: 72px;
+}
+
+.sync-pill[aria-pressed="false"] {
+    background: transparent;
+    border-color: var(--dwb-border);
+    color: var(--dwb-muted);
 }
 
 .panel-menu-btn {

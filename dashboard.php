@@ -100,7 +100,9 @@ if ($mergeId !== '' && $mergeWithId !== '') {
 
 // ── Column / sensor metadata ───────────────────────────────────────────────
 $colRepo = new ColumnRepository($pdo);
-$coldata = $colRepo->findPlottable();
+$coldata = $hasSession
+    ? $colRepo->findForSession($session_id)
+    : $colRepo->findPlottable();
 
 // ── GPS track ──────────────────────────────────────────────────────────────
 $gpsRepo = new GpsRepository($pdo);
@@ -199,8 +201,50 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
         <?php endforeach; ?>
     </div>
 
+    <?php if ($hasSession): ?>
+    <button id="sync-cursor-toggle"
+            class="grid-pill sync-pill active"
+            type="button"
+            aria-pressed="true"
+            title="Synchronize chart cursors across visible panels">
+        Sync On
+    </button>
+    <button id="range-reset"
+            class="grid-pill range-preset active"
+            type="button"
+            data-range-preset="full"
+            title="Reset all chart time ranges">
+        Full
+    </button>
+    <button class="grid-pill range-preset"
+            type="button"
+            data-range-seconds="60"
+            title="Show the last minute across all charts">
+        1m
+    </button>
+    <button class="grid-pill range-preset"
+            type="button"
+            data-range-seconds="300"
+            title="Show the last five minutes across all charts">
+        5m
+    </button>
+    <button class="grid-pill range-preset"
+            type="button"
+            data-range-seconds="600"
+            title="Show the last ten minutes across all charts">
+        10m
+    </button>
+    <?php endif; ?>
+
     <!-- Right actions -->
     <div class="topbar-right">
+        <a href="adminer.php"
+           class="btn btn-sm btn-outline-secondary"
+           target="_blank"
+           rel="noopener">
+            DB
+        </a>
+
         <?php if ($hasSession && count($geolocs) > 0): ?>
         <button class="btn btn-sm btn-outline-secondary"
                 data-toggle="modal" data-target="#mapModal">
@@ -229,6 +273,19 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
 <!-- ════════════════════════════════════════════════════════════ MAIN CANVAS -->
 <div id="dwb-canvas">
 
+    <?php if ($hasSession): ?>
+    <div id="sync-inspector" class="sync-inspector is-empty" hidden>
+        <div class="sync-inspector-time">Move across a chart to inspect synced sensor values.</div>
+        <div class="sync-inspector-values"></div>
+        <button id="pin-clear"
+                class="sync-inspector-clear"
+                type="button"
+                hidden>
+            Clear pin
+        </button>
+    </div>
+    <?php endif; ?>
+
     <!-- Panel grid -->
     <div id="panel-grid"
          style="--grid-cols:<?= $gridCols ?>;"
@@ -238,15 +295,17 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
         <?php for ($i = 0; $i < $panelCount; $i++):
             $p          = $panels[$i];
             $sensorKey  = $p['sensor'];
+            $sensorKeys = array_values(array_slice($p['sensors'] ?? [], 0, 6));
             $cs         = $p['cs'];
             $rs         = $p['rs'];
-            $hasPlot    = ($hasSession && $sensorKey !== '');
+            $hasPlot    = ($hasSession && count($sensorKeys) > 0);
             $colStyle   = ($cs > 1) ? "grid-column:span {$cs};" : '';
             $rowStyle   = ($rs > 1) ? "grid-row:span {$rs};"    : '';
         ?>
         <div class="dwb-panel" id="panel-<?= $i ?>"
              style="<?= $colStyle . $rowStyle ?>"
              data-panel-idx="<?= $i ?>"
+             data-sensors="<?= htmlspecialchars(json_encode($sensorKeys), ENT_QUOTES) ?>"
              data-cs="<?= $cs ?>"
              data-rs="<?= $rs ?>">
 
@@ -259,11 +318,20 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
                         <?= ((string) ($col['key'] ?? '') === (string) $sensorKey) ? 'selected' : '' ?>>
                         <?= htmlspecialchars((string) ($col['label'] ?? ''), ENT_QUOTES) ?>
                         <?php if (!empty($col['unit'])): ?>
-                            (<?= htmlspecialchars((string) ($col['unit'] ?? ''), ENT_QUOTES) ?>)
+                            [<?= htmlspecialchars((string) ($col['unit'] ?? ''), ENT_QUOTES) ?>]
+                        <?php endif; ?>
+                        <?php if (isset($col['sample_count'])): ?>
+                            (<?= number_format((int) $col['sample_count']) ?> readings)
                         <?php endif; ?>
                     </option>
                     <?php endforeach; ?>
                 </select>
+                <button class="panel-add-sensor"
+                        type="button"
+                        data-panel-idx="<?= $i ?>"
+                        title="Add selected sensor to this panel">
+                    +
+                </button>
 
                 <!-- ⋮ panel menu -->
                 <div class="dropdown">
@@ -296,6 +364,34 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
                 </div>
             </div>
 
+            <?php if (count($sensorKeys) > 0): ?>
+            <div class="panel-sensor-chips">
+                <?php foreach ($sensorKeys as $activeKey):
+                    $activeMeta = null;
+                    foreach ($coldata as $col) {
+                        if ((string) ($col['key'] ?? '') === (string) $activeKey) {
+                            $activeMeta = $col;
+                            break;
+                        }
+                    }
+                    $chipLabel = (string) ($activeMeta['label'] ?? $activeKey);
+                    $chipUnit  = (string) ($activeMeta['unit'] ?? '');
+                ?>
+                <button class="panel-sensor-chip panel-remove-sensor"
+                        type="button"
+                        data-panel-idx="<?= $i ?>"
+                        data-sensor-key="<?= htmlspecialchars((string) $activeKey, ENT_QUOTES) ?>"
+                        title="Remove this sensor">
+                    <span><?= htmlspecialchars($chipLabel, ENT_QUOTES) ?></span>
+                    <?php if ($chipUnit !== ''): ?>
+                    <small><?= htmlspecialchars($chipUnit, ENT_QUOTES) ?></small>
+                    <?php endif; ?>
+                    <b>×</b>
+                </button>
+                <?php endforeach; ?>
+            </div>
+            <?php endif; ?>
+
             <!-- Panel body -->
             <div class="panel-body">
                 <?php if (!$hasSession): ?>
@@ -312,7 +408,8 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
              <div class="panel-chart-area"
                  id="chart-<?= $i ?>"
                  data-sid="<?= htmlspecialchars((string) ($session_id ?? ''), ENT_QUOTES) ?>"
-                 data-key="<?= htmlspecialchars((string) ($sensorKey ?? ''), ENT_QUOTES) ?>">
+                 data-key="<?= htmlspecialchars((string) ($sensorKey ?? ''), ENT_QUOTES) ?>"
+                 data-keys="<?= htmlspecialchars(json_encode($sensorKeys), ENT_QUOTES) ?>">
                     <div class="panel-spinner">
                         <div class="spinner-border spinner-border-sm text-secondary"></div>
                         <span>Loading…</span>
@@ -529,7 +626,12 @@ const DWB = (() => {
         if (sid)  u.searchParams.set('id',   sid);
         if (grid) u.searchParams.set('grid', grid);
         panelArr.forEach((p, i) => {
-            if (p.sensor) u.searchParams.append(`p[${i}][s][]`, p.sensor);
+            const sensors = Array.isArray(p.sensors)
+                ? p.sensors
+                : (p.sensor ? [p.sensor] : []);
+            sensors.slice(0, 6).forEach(sensor => {
+                if (sensor) u.searchParams.append(`p[${i}][s][]`, sensor);
+            });
             if (p.cs > 1) u.searchParams.set(`p[${i}][cs]`, p.cs);
             if (p.rs > 1) u.searchParams.set(`p[${i}][rs]`, p.rs);
         });
@@ -561,9 +663,10 @@ const DWB = (() => {
         const panels = [];
         document.querySelectorAll('.dwb-panel').forEach(panel => {
             const idx  = Number(panel.dataset.panelIdx);
-            const sel  = panel.querySelector('.panel-sensor-select');
+            const sensors = parsePanelSensors(panel);
             panels[idx] = {
-                sensor: sel ? sel.value : '',
+                sensor: sensors[0] || '',
+                sensors,
                 cs: Number(panel.dataset.cs || 1),
                 rs: Number(panel.dataset.rs || 1),
             };
@@ -571,10 +674,44 @@ const DWB = (() => {
         return panels;
     }
 
+    function parsePanelSensors(panel) {
+        if (!panel) return [];
+        try {
+            const sensors = JSON.parse(panel.dataset.sensors || '[]');
+            return Array.isArray(sensors) ? sensors.filter(Boolean).slice(0, 6) : [];
+        } catch (e) {
+            return [];
+        }
+    }
+
     /** Change sensor for one panel */
     function setPanelSensor(idx, key) {
         const arr = getCurrentPanelState();
         arr[idx].sensor = key;
+        arr[idx].sensors = key ? [key] : [];
+        window.location = buildUrl(SESSION_ID, GRID_PARAM, arr);
+    }
+
+    /** Add one sensor to an existing panel overlay */
+    function addPanelSensor(idx, key) {
+        if (!key) return;
+        const arr = getCurrentPanelState();
+        const sensors = arr[idx].sensors || [];
+        if (sensors.includes(key)) return;
+        if (sensors.length >= 6) {
+            alert('A panel can show up to six sensors.');
+            return;
+        }
+        arr[idx].sensors = sensors.concat(key);
+        arr[idx].sensor = arr[idx].sensors[0] || '';
+        window.location = buildUrl(SESSION_ID, GRID_PARAM, arr);
+    }
+
+    /** Remove one sensor from an overlay panel */
+    function removePanelSensor(idx, key) {
+        const arr = getCurrentPanelState();
+        arr[idx].sensors = (arr[idx].sensors || []).filter(sensor => sensor !== key);
+        arr[idx].sensor = arr[idx].sensors[0] || '';
         window.location = buildUrl(SESSION_ID, GRID_PARAM, arr);
     }
 
@@ -590,6 +727,7 @@ const DWB = (() => {
     function clearPanel(idx) {
         const arr = getCurrentPanelState();
         arr[idx].sensor = '';
+        arr[idx].sensors = [];
         window.location = buildUrl(SESSION_ID, GRID_PARAM, arr);
     }
 
@@ -602,10 +740,21 @@ const DWB = (() => {
             return;
         }
         arr[free].sensor = key;
+        arr[free].sensors = [key];
         window.location = buildUrl(SESSION_ID, GRID_PARAM, arr);
     }
 
-    return { buildUrl, setSession, setGrid, setPanelSensor, setPanelSpan, clearPanel, addSensorToNextPanel };
+    return {
+        buildUrl,
+        setSession,
+        setGrid,
+        setPanelSensor,
+        addPanelSensor,
+        removePanelSensor,
+        setPanelSpan,
+        clearPanel,
+        addSensorToNextPanel,
+    };
 })();
 
 /* ── Session picker ─────────────────────────────────────────────────────── */
@@ -622,7 +771,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Grid preset pills
-    document.querySelectorAll('.grid-pill').forEach(btn => {
+    document.querySelectorAll('.grid-pill[data-preset]').forEach(btn => {
         btn.addEventListener('click', () => DWB.setGrid(btn.dataset.preset));
     });
 
@@ -630,6 +779,21 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.panel-sensor-select').forEach(sel => {
         sel.addEventListener('change', () => {
             DWB.setPanelSensor(Number(sel.dataset.panelIdx), sel.value);
+        });
+    });
+
+    document.querySelectorAll('.panel-add-sensor').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const panel = btn.closest('.dwb-panel');
+            const sel = panel?.querySelector('.panel-sensor-select');
+            if (!sel?.value) return;
+            DWB.addPanelSensor(Number(btn.dataset.panelIdx), sel.value);
+        });
+    });
+
+    document.querySelectorAll('.panel-remove-sensor').forEach(btn => {
+        btn.addEventListener('click', () => {
+            DWB.removePanelSensor(Number(btn.dataset.panelIdx), btn.dataset.sensorKey);
         });
     });
 
@@ -741,6 +905,10 @@ function initLeaflet() {
 
     /* Shared cursor-sync so all visible panels cross-hair together */
     const cursorSync = uPlot.sync('dwb');
+    let syncCursorEnabled = true;
+    let applyingSyncedRange = false;
+    let currentSyncedRange = null;
+    let pinnedTimeMs = null;
 
     /* uPlot colour palette */
     const LINE_COLOR   = '#4e9af1';
@@ -748,19 +916,160 @@ function initLeaflet() {
     const GRID_COLOR   = 'rgba(255,255,255,0.06)';
     const TICK_COLOR   = 'rgba(255,255,255,0.20)';
     const LABEL_COLOR  = '#8b97a8';
+    const NEAREST_VALUE_TOLERANCE_MS = 1500;
+    const STALE_VALUE_MS = 750;
+    const MIN_GAP_THRESHOLD_MS = 3000;
+    const MAX_RENDER_POINTS = 3000;
+    const REFERENCE_LINE_COLOR = 'rgba(247,196,83,0.58)';
+    const REFERENCE_LABEL_COLOR = 'rgba(247,196,83,0.78)';
+    const SERIES_COLORS = [
+        '#4e9af1',
+        '#f7c453',
+        '#45d19a',
+        '#f06f8f',
+        '#9b8cff',
+        '#f28f45',
+    ];
 
-    /* Map of panelIdx → uPlot instance (for resize observer) */
-    const charts = new Map();
+    /*
+     * Runtime chart registry.
+     *
+     * Step 1 keeps existing behaviour intact while giving later sync,
+     * inspector, zoom and pinned-marker work a single place to find visible
+     * charts and their raw sensor data.
+     */
+    const DWBCharts = (() => {
+        const panels = new Map();
 
-    /* Build a minimal uPlot opts object for a single-series panel */
-    function buildOpts(label, unit, width, height) {
+        function registerPanel(panelIdx, sensorStates, uplot, container, plotData, chartMeta) {
+            const sensors = Array.isArray(sensorStates) ? sensorStates : [sensorStates];
+            const fullRange = sensors.reduce((range, sensor) => {
+                if (!sensor.xSeconds || sensor.xSeconds.length === 0) return range;
+                const min = sensor.xSeconds[0];
+                const max = sensor.xSeconds[sensor.xSeconds.length - 1];
+                return {
+                    min: range ? Math.min(range.min, min) : min,
+                    max: range ? Math.max(range.max, max) : max,
+                };
+            }, null);
+
+            panels.set(panelIdx, {
+                panelIdx,
+                sensors,
+                uplot,
+                container,
+                plotData,
+                chartMeta,
+                fullRange,
+            });
+        }
+
+        function getChart(panelIdx) {
+            return panels.get(panelIdx)?.uplot ?? null;
+        }
+
+        function getPanelStates() {
+            return Array.from(panels.values());
+        }
+
+        function getVisibleSensors() {
+            return Array.from(panels.values()).flatMap(panel => panel.sensors);
+        }
+
+        function replaceChart(panelIdx, uplot) {
+            const panelState = panels.get(panelIdx);
+            if (!panelState) return;
+            panelState.uplot = uplot;
+        }
+
+        function getFullRange() {
+            let min = null;
+            let max = null;
+
+            panels.forEach(panel => {
+                if (!panel.fullRange) return;
+                min = min === null ? panel.fullRange.min : Math.min(min, panel.fullRange.min);
+                max = max === null ? panel.fullRange.max : Math.max(max, panel.fullRange.max);
+            });
+
+            return min !== null && max !== null ? { min, max } : null;
+        }
+
+        function resizePanel(panelIdx) {
+            const panelState = panels.get(panelIdx);
+            if (!panelState) return;
+
+            const panel = document.querySelector(`.dwb-panel[data-panel-idx="${panelIdx}"]`);
+            const area = panel?.querySelector('.panel-chart-area');
+            if (!area) return;
+
+            const w = area.clientWidth  || 400;
+            const h = area.clientHeight || 200;
+            panelState.uplot.setSize({ width: w, height: h });
+        }
+
         return {
+            registerPanel,
+            getChart,
+            getPanelStates,
+            getVisibleSensors,
+            replaceChart,
+            getFullRange,
+            resizePanel,
+        };
+    })();
+
+    window.DWBCharts = DWBCharts;
+
+    /* Build a minimal uPlot opts object for a panel chart */
+    function buildOpts(label, unit, width, height, sensors = []) {
+        const opts = {
             title:  '',
             width:  width,
             height: height,
-            cursor: {
-                sync: { key: cursorSync.key },
+            cursor: {},
+            hooks: {
+                setCursor: [
+                    u => {
+                        if (pinnedTimeMs !== null) return;
+                        if (u.cursor.left == null) return;
+                        const seconds = u.posToVal(u.cursor.left, 'x');
+                        if (Number.isFinite(seconds)) {
+                            scheduleInspectorUpdate(seconds * 1000);
+                        }
+                    },
+                ],
+                ready: [
+                    u => {
+                        attachRangeInteractions(u);
+                    },
+                ],
+                click: [
+                    u => {
+                        if (u.cursor.left == null) return;
+                        const seconds = u.posToVal(u.cursor.left, 'x');
+                        if (Number.isFinite(seconds)) {
+                            pinInspector(seconds * 1000);
+                        }
+                    },
+                ],
+                setScale: [
+                    (u, scaleKey) => {
+                        if (scaleKey !== 'x' || applyingSyncedRange) return;
+                        const xScale = u.scales.x;
+                        if (!Number.isFinite(xScale.min) || !Number.isFinite(xScale.max)) return;
+                        syncTimeRange({ min: xScale.min, max: xScale.max }, u);
+                    },
+                ],
+                dblClick: [
+                    () => {
+                        resetTimeRange();
+                    },
+                ],
             },
+            plugins: buildReferencePluginsForSensors(
+                sensors.length > 0 ? sensors : [{ label, unit }]
+            ),
             legend: { show: false },
             scales: {
                 x: { time: true },
@@ -785,16 +1094,121 @@ function initLeaflet() {
                     labelSize: 14,
                 },
             ],
-            series: [
-                {},
-                {
-                    label:  label,
-                    stroke: LINE_COLOR,
-                    fill:   FILL_COLOR,
-                    width:  1.5,
-                    points: { show: false },
-                },
-            ],
+            series: buildSeriesOptions(label, sensors),
+        };
+
+        if (syncCursorEnabled) {
+            opts.cursor.sync = { key: cursorSync.key };
+        }
+
+        return opts;
+    }
+
+    function buildSeriesOptions(label, sensors) {
+        const seriesSensors = sensors.length > 0 ? sensors : [{ label }];
+        return [
+            {},
+            ...seriesSensors.map((sensor, index) => ({
+                label: displayLabel(sensor.label || label),
+                stroke: SERIES_COLORS[index % SERIES_COLORS.length],
+                fill: seriesSensors.length === 1 ? FILL_COLOR : 'transparent',
+                width: 1.5,
+                points: { show: false },
+            })),
+        ];
+    }
+
+    function buildReferencePluginsForSensors(sensors) {
+        const references = sensors.flatMap(sensor => referenceRulesForSensor(sensor.label, sensor.unit));
+        return references.length > 0 ? [referenceOverlayPlugin(references)] : [];
+    }
+
+    function referenceRulesForSensor(label, unit) {
+        const normalizedLabel = String(label || '').toLowerCase();
+        const normalizedUnit = normalizeUnit(unit);
+        const references = [];
+
+        if (normalizedUnit === '%' && /fuel\s*trim|trim/.test(normalizedLabel)) {
+            references.push({
+                value: 0,
+                label: '0%',
+                stroke: REFERENCE_LINE_COLOR,
+                fill: REFERENCE_LABEL_COLOR,
+            });
+        }
+
+        if (
+            ['psi', 'bar', 'kpa'].includes(normalizedUnit)
+            && /boost|manifold|map|pressure/.test(normalizedLabel)
+        ) {
+            references.push({
+                value: 0,
+                label: `0 ${unit || ''}`.trim(),
+                stroke: REFERENCE_LINE_COLOR,
+                fill: REFERENCE_LABEL_COLOR,
+            });
+        }
+
+        return references;
+    }
+
+    function normalizeUnit(unit) {
+        return String(unit || '')
+            .trim()
+            .toLowerCase()
+            .replace('℃', '°c')
+            .replace('℉', '°f');
+    }
+
+    function referenceOverlayPlugin(references) {
+        return {
+            hooks: {
+                draw: [
+                    u => {
+                        const bbox = u.bbox;
+                        if (!bbox || !Number.isFinite(u.scales.y.min) || !Number.isFinite(u.scales.y.max)) {
+                            return;
+                        }
+
+                        const ctx = u.ctx;
+                        const left = bbox.left;
+                        const right = bbox.left + bbox.width;
+                        const top = bbox.top;
+                        const bottom = bbox.top + bbox.height;
+
+                        ctx.save();
+                        references.forEach(reference => {
+                            if (
+                                reference.value < u.scales.y.min
+                                || reference.value > u.scales.y.max
+                            ) {
+                                return;
+                            }
+
+                            const y = Math.round(u.valToPos(reference.value, 'y', true)) + 0.5;
+                            if (y < top || y > bottom) return;
+
+                            ctx.beginPath();
+                            ctx.setLineDash([4, 4]);
+                            ctx.lineWidth = 1;
+                            ctx.strokeStyle = reference.stroke;
+                            ctx.moveTo(left, y);
+                            ctx.lineTo(right, y);
+                            ctx.stroke();
+
+                            if (reference.label) {
+                                ctx.setLineDash([]);
+                                ctx.font = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
+                                ctx.textAlign = 'right';
+                                ctx.textBaseline = 'bottom';
+                                ctx.fillStyle = reference.fill;
+                                ctx.fillText(reference.label, right - 4, y - 3);
+                            }
+                        });
+                        ctx.restore();
+                    },
+                ],
+            },
         };
     }
 
@@ -809,14 +1223,459 @@ function initLeaflet() {
         return [xs, ys];
     }
 
+    function pairsToGapAwareUplot(pairs, gapThresholdMs = calculateGapThresholdMs(pairs)) {
+        const xs = [];
+        const ys = [];
+
+        for (let i = 0; i < pairs.length; i++) {
+            if (i > 0 && pairs[i][0] - pairs[i - 1][0] > gapThresholdMs) {
+                xs.push((pairs[i - 1][0] + 1) / 1000, (pairs[i][0] - 1) / 1000);
+                ys.push(null, null);
+            }
+
+            xs.push(pairs[i][0] / 1000);
+            ys.push(pairs[i][1]);
+        }
+
+        return [xs, ys];
+    }
+
+    function calculateGapThresholdMs(pairs) {
+        if (!pairs || pairs.length < 3) return MIN_GAP_THRESHOLD_MS;
+
+        const deltas = [];
+        for (let i = 1; i < pairs.length; i++) {
+            const delta = pairs[i][0] - pairs[i - 1][0];
+            if (delta > 0) deltas.push(delta);
+        }
+
+        if (deltas.length === 0) return MIN_GAP_THRESHOLD_MS;
+
+        deltas.sort((a, b) => a - b);
+        const median = deltas[Math.floor(deltas.length / 2)];
+        return Math.max(MIN_GAP_THRESHOLD_MS, median * 3);
+    }
+
+    function downsamplePairsForRender(pairs, maxPoints = MAX_RENDER_POINTS) {
+        if (!pairs || pairs.length <= maxPoints || maxPoints < 4) return pairs;
+
+        const renderPairs = [pairs[0]];
+        const bucketCount = Math.max(1, Math.floor((maxPoints - 2) / 2));
+        const bucketSize = (pairs.length - 2) / bucketCount;
+
+        for (let bucket = 0; bucket < bucketCount; bucket++) {
+            const start = 1 + Math.floor(bucket * bucketSize);
+            const end = Math.min(
+                pairs.length - 1,
+                1 + Math.floor((bucket + 1) * bucketSize)
+            );
+
+            if (start >= end) continue;
+
+            let minIdx = start;
+            let maxIdx = start;
+
+            for (let i = start + 1; i < end; i++) {
+                if (pairs[i][1] < pairs[minIdx][1]) minIdx = i;
+                if (pairs[i][1] > pairs[maxIdx][1]) maxIdx = i;
+            }
+
+            if (minIdx === maxIdx) {
+                renderPairs.push(pairs[minIdx]);
+            } else if (minIdx < maxIdx) {
+                renderPairs.push(pairs[minIdx], pairs[maxIdx]);
+            } else {
+                renderPairs.push(pairs[maxIdx], pairs[minIdx]);
+            }
+        }
+
+        renderPairs.push(pairs[pairs.length - 1]);
+        return renderPairs;
+    }
+
     /* Replace the spinner inside a chart-area div with a uPlot instance */
-    function mountChart(container, label, unit, data) {
+    function mountChart(container, label, unit, data, sensors = []) {
         container.innerHTML = '';
         const w = container.clientWidth  || 400;
         const h = container.clientHeight || 200;
-        const opts = buildOpts(label, unit, w, h);
+        const opts = buildOpts(label, unit, w, h, sensors);
         const u    = new uPlot(opts, data, container);
         return u;
+    }
+
+    let inspectorFrame = null;
+    let pendingInspectorTimeMs = null;
+
+    function scheduleInspectorUpdate(timeMs) {
+        pendingInspectorTimeMs = timeMs;
+        if (inspectorFrame !== null) return;
+
+        inspectorFrame = window.requestAnimationFrame(() => {
+            inspectorFrame = null;
+            renderInspector(pendingInspectorTimeMs);
+        });
+    }
+
+    function renderInspector(timeMs) {
+        const inspector = document.getElementById('sync-inspector');
+        if (!inspector || timeMs == null) return;
+
+        const timeEl = inspector.querySelector('.sync-inspector-time');
+        const valuesEl = inspector.querySelector('.sync-inspector-values');
+        const clearBtn = inspector.querySelector('#pin-clear');
+        if (!timeEl || !valuesEl) return;
+
+        const sensors = DWBCharts.getVisibleSensors();
+        if (sensors.length === 0) return;
+
+        inspector.hidden = false;
+        inspector.classList.remove('is-empty');
+        inspector.classList.toggle('is-pinned', pinnedTimeMs !== null);
+        if (clearBtn) clearBtn.hidden = pinnedTimeMs === null;
+        timeEl.textContent = `${pinnedTimeMs !== null ? 'Pinned ' : ''}${formatInspectorTime(timeMs)}`;
+        valuesEl.replaceChildren();
+
+        sensors.forEach(sensor => {
+            valuesEl.appendChild(buildInspectorChip(sensor, timeMs));
+        });
+    }
+
+    function pinInspector(timeMs) {
+        pinnedTimeMs = timeMs;
+        renderInspector(timeMs);
+    }
+
+    function clearPinnedInspector() {
+        pinnedTimeMs = null;
+
+        const inspector = document.getElementById('sync-inspector');
+        if (!inspector) return;
+
+        inspector.classList.remove('is-pinned');
+        const clearBtn = inspector.querySelector('#pin-clear');
+        if (clearBtn) clearBtn.hidden = true;
+
+        if (pendingInspectorTimeMs !== null) {
+            renderInspector(pendingInspectorTimeMs);
+        }
+    }
+
+    function buildInspectorChip(sensor, timeMs) {
+        const nearest = nearestPair(sensor.rawPairs, timeMs, NEAREST_VALUE_TOLERANCE_MS);
+        const chip = document.createElement('span');
+        chip.className = 'sync-inspector-chip';
+
+        const label = document.createElement('span');
+        label.className = 'sync-inspector-label';
+        label.textContent = displayLabel(sensor.label);
+        chip.appendChild(label);
+
+        const value = document.createElement('span');
+        value.className = 'sync-inspector-value';
+
+        if (!nearest) {
+            chip.classList.add('is-missing');
+            value.textContent = 'no value';
+            chip.appendChild(value);
+            return chip;
+        }
+
+        const deltaMs = Math.round(nearest[0] - timeMs);
+        if (Math.abs(deltaMs) > STALE_VALUE_MS) {
+            chip.classList.add('is-stale');
+        }
+
+        value.textContent = formatSensorValue(nearest[1], sensor.unit);
+        chip.appendChild(value);
+
+        if (sensor.unit) {
+            const unit = document.createElement('span');
+            unit.className = 'sync-inspector-unit';
+            unit.textContent = sensor.unit;
+            chip.appendChild(unit);
+        }
+
+        if (Math.abs(deltaMs) > 0) {
+            const delta = document.createElement('span');
+            delta.className = 'sync-inspector-delta';
+            delta.textContent = formatDelta(deltaMs);
+            chip.appendChild(delta);
+        }
+
+        return chip;
+    }
+
+    function nearestPair(pairs, targetMs, toleranceMs) {
+        if (!pairs || pairs.length === 0) return null;
+
+        let lo = 0;
+        let hi = pairs.length;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (pairs[mid][0] < targetMs) lo = mid + 1;
+            else hi = mid;
+        }
+
+        const before = pairs[lo - 1] ?? null;
+        const after = pairs[lo] ?? null;
+        const nearest = chooseNearest(before, after, targetMs);
+
+        return nearest && Math.abs(nearest[0] - targetMs) <= toleranceMs
+            ? nearest
+            : null;
+    }
+
+    function chooseNearest(before, after, targetMs) {
+        if (!before) return after;
+        if (!after) return before;
+
+        return Math.abs(before[0] - targetMs) <= Math.abs(after[0] - targetMs)
+            ? before
+            : after;
+    }
+
+    function formatInspectorTime(timeMs) {
+        const d = new Date(timeMs);
+        const base = d.toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+        });
+        return `${base}.${String(d.getMilliseconds()).padStart(3, '0')}`;
+    }
+
+    function displayLabel(label) {
+        return String(label || '').replace(/\s*\[[^\]]+\]\s*$/, '');
+    }
+
+    function formatSensorValue(value, unit) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return String(value);
+
+        const normalizedUnit = String(unit || '').toLowerCase();
+        if (normalizedUnit === 'rpm') return n.toFixed(0);
+        if (normalizedUnit === '%' || normalizedUnit === 'km/h' || normalizedUnit === 'mph') return n.toFixed(1);
+        if (normalizedUnit === 'bar') return n.toFixed(2);
+        if (normalizedUnit === 'psi' || normalizedUnit === 'kpa') return n.toFixed(1);
+        if (normalizedUnit === '°c' || normalizedUnit === '°f') return n.toFixed(1);
+        if (Math.abs(n) >= 100) return n.toFixed(0);
+        if (Math.abs(n) >= 10) return n.toFixed(1);
+        return n.toFixed(2);
+    }
+
+    function formatDelta(deltaMs) {
+        const sign = deltaMs > 0 ? '+' : '-';
+        return `${sign}${Math.abs(deltaMs)}ms`;
+    }
+
+    function setSyncCursorEnabled(enabled) {
+        syncCursorEnabled = enabled;
+        document.querySelectorAll('.uplot').forEach(el => {
+            el.classList.toggle('sync-disabled', !enabled);
+        });
+    }
+
+    function remountChartsForSyncState() {
+        DWBCharts.getPanelStates().forEach(panelState => {
+            if (typeof panelState.uplot.destroy === 'function') {
+                panelState.uplot.destroy();
+            }
+
+            const u = mountChart(
+                panelState.container,
+                panelState.chartMeta.label,
+                panelState.chartMeta.unit,
+                panelState.plotData,
+                panelState.sensors
+            );
+            DWBCharts.replaceChart(panelState.panelIdx, u);
+
+            if (currentSyncedRange) {
+                u.setScale('x', currentSyncedRange);
+            }
+        });
+    }
+
+    function syncTimeRange(range, sourceChart = null) {
+        if (!isUsefulRange(range)) return;
+
+        setActiveRangePreset(null);
+        currentSyncedRange = { min: range.min, max: range.max };
+        applyingSyncedRange = true;
+        try {
+            DWBCharts.getPanelStates().forEach(panelState => {
+                const u = panelState.uplot;
+                if (!u || u === sourceChart) return;
+                u.setScale('x', currentSyncedRange);
+            });
+        } finally {
+            applyingSyncedRange = false;
+        }
+    }
+
+    function resetTimeRange() {
+        const fullRange = DWBCharts.getFullRange();
+        if (!fullRange || !isUsefulRange(fullRange)) return;
+
+        currentSyncedRange = null;
+        setActiveRangePreset('full');
+        applyingSyncedRange = true;
+        try {
+            DWBCharts.getPanelStates().forEach(panelState => {
+                panelState.uplot.setScale('x', fullRange);
+            });
+        } finally {
+            applyingSyncedRange = false;
+        }
+    }
+
+    function isUsefulRange(range) {
+        return range
+            && Number.isFinite(range.min)
+            && Number.isFinite(range.max)
+            && range.max > range.min;
+    }
+
+    function attachRangeInteractions(u) {
+        const over = u.over;
+        if (!over) return;
+
+        let panStart = null;
+
+        over.addEventListener('wheel', event => {
+            if (!u.scales?.x) return;
+            event.preventDefault();
+
+            const rect = over.getBoundingClientRect();
+            const pointerX = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+            const center = u.posToVal(pointerX, 'x');
+            const range = currentChartRange(u);
+            if (!Number.isFinite(center) || !isUsefulRange(range)) return;
+
+            const zoomFactor = event.deltaY < 0 ? 0.85 : 1.18;
+            const next = boundedRange({
+                min: center - (center - range.min) * zoomFactor,
+                max: center + (range.max - center) * zoomFactor,
+            });
+            syncTimeRange(next, null);
+        }, { passive: false });
+
+        over.addEventListener('mousedown', event => {
+            if (event.button !== 0 || !u.scales?.x) return;
+
+            panStart = {
+                x: event.clientX,
+                range: currentChartRange(u),
+            };
+
+            over.classList.add('is-panning');
+            event.preventDefault();
+        });
+
+        window.addEventListener('mousemove', event => {
+            if (!panStart || !isUsefulRange(panStart.range)) return;
+
+            const dx = event.clientX - panStart.x;
+            const secondsPerPixel = (panStart.range.max - panStart.range.min) / Math.max(1, u.bbox.width);
+            const shift = dx * secondsPerPixel;
+            const next = boundedRange({
+                min: panStart.range.min - shift,
+                max: panStart.range.max - shift,
+            });
+
+            syncTimeRange(next, null);
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (!panStart) return;
+            panStart = null;
+            over.classList.remove('is-panning');
+        });
+    }
+
+    function currentChartRange(u) {
+        return {
+            min: u.scales.x.min,
+            max: u.scales.x.max,
+        };
+    }
+
+    function boundedRange(range) {
+        const full = DWBCharts.getFullRange();
+        if (!full || !isUsefulRange(range)) return range;
+
+        const width = range.max - range.min;
+        const fullWidth = full.max - full.min;
+        if (width >= fullWidth) return full;
+
+        if (range.min < full.min) {
+            return { min: full.min, max: full.min + width };
+        }
+
+        if (range.max > full.max) {
+            return { min: full.max - width, max: full.max };
+        }
+
+        return range;
+    }
+
+    function applyTimePreset(seconds) {
+        const fullRange = DWBCharts.getFullRange();
+        if (!fullRange || !Number.isFinite(seconds) || seconds <= 0) return;
+
+        const range = {
+            min: Math.max(fullRange.min, fullRange.max - seconds),
+            max: fullRange.max,
+        };
+
+        if (!isUsefulRange(range)) return;
+        syncTimeRange(range, null);
+        setActiveRangePreset(String(seconds));
+    }
+
+    function setActiveRangePreset(value) {
+        document.querySelectorAll('.range-preset').forEach(btn => {
+            const btnValue = btn.dataset.rangeSeconds ?? btn.dataset.rangePreset ?? null;
+            btn.classList.toggle('active', value !== null && btnValue === value);
+        });
+    }
+
+    function initSyncToggle() {
+        const btn = document.getElementById('sync-cursor-toggle');
+        if (!btn) return;
+
+        btn.addEventListener('click', () => {
+            const enabled = btn.getAttribute('aria-pressed') !== 'true';
+            btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+            btn.classList.toggle('active', enabled);
+            btn.textContent = enabled ? 'Sync On' : 'Sync Off';
+
+            setSyncCursorEnabled(enabled);
+            remountChartsForSyncState();
+        });
+    }
+
+    function initRangeReset() {
+        const btn = document.getElementById('range-reset');
+        if (!btn) return;
+        btn.addEventListener('click', resetTimeRange);
+    }
+
+    function initRangePresets() {
+        document.querySelectorAll('.range-preset[data-range-seconds]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                applyTimePreset(Number(btn.dataset.rangeSeconds));
+            });
+        });
+    }
+
+    function initPinnedInspectorControls() {
+        document.getElementById('pin-clear')?.addEventListener('click', clearPinnedInspector);
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape' && pinnedTimeMs !== null) {
+                clearPinnedInspector();
+            }
+        });
     }
 
     /* Show an error state in a panel */
@@ -825,36 +1684,98 @@ function initLeaflet() {
             `<div class="panel-empty"><div class="empty-icon">⚠</div><p>${msg}</p></div>`;
     }
 
+    function parseChartKeys(container) {
+        try {
+            const keys = JSON.parse(container.dataset.keys || '[]');
+            if (Array.isArray(keys)) return keys.filter(Boolean).slice(0, 6);
+        } catch (e) {
+            // Fall back to the legacy single-key attribute below.
+        }
+
+        return container.dataset.key ? [container.dataset.key] : [];
+    }
+
+    async function fetchSensorSeries(sid, key) {
+        const resp = await fetch(`api/sensor.php?sid=${encodeURIComponent(sid)}&key=${encodeURIComponent(key)}`);
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+            throw new Error(err.error ?? 'Failed to load');
+        }
+
+        const json = await resp.json();
+        if (!json.data || json.data.length === 0) {
+            throw new Error('No data');
+        }
+
+        const rawData = apiToUplot(json.data);
+        const gapThresholdMs = calculateGapThresholdMs(json.data);
+        const renderPairs = downsamplePairsForRender(json.data);
+        const renderData = pairsToGapAwareUplot(renderPairs, gapThresholdMs);
+
+        return {
+            key,
+            label: json.label,
+            unit: json.unit || '',
+            rawPairs: json.data,
+            renderPairs,
+            plotData: renderData,
+            xSeconds: rawData[0],
+            yValues: rawData[1],
+        };
+    }
+
+    function buildPanelPlotData(sensors) {
+        if (sensors.length === 1) return sensors[0].plotData;
+        return uPlot.join(sensors.map(sensor => sensor.plotData));
+    }
+
+    function chartMetaForSensors(sensors) {
+        const units = Array.from(new Set(sensors.map(sensor => sensor.unit || '').filter(Boolean)));
+        return {
+            label: sensors.map(sensor => displayLabel(sensor.label)).join(' + '),
+            unit: units.length === 1 ? units[0] : (units.length > 1 ? 'mixed units' : ''),
+        };
+    }
+
     /* Fetch + render one panel */
     async function loadPanel(container) {
         const sid = container.dataset.sid;
-        const key = container.dataset.key;
+        const keys = parseChartKeys(container);
         const idx = Number(container.closest('.dwb-panel')?.dataset.panelIdx ?? -1);
 
         try {
-            const resp = await fetch(`api/sensor.php?sid=${encodeURIComponent(sid)}&key=${encodeURIComponent(key)}`);
-            if (!resp.ok) {
-                const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
-                showError(container, err.error ?? 'Failed to load');
-                return;
-            }
-            const json = await resp.json();
-            if (!json.data || json.data.length === 0) {
+            if (keys.length === 0) {
                 showError(container, 'No data');
                 return;
             }
-            const udata = apiToUplot(json.data);
-            const u     = mountChart(container, json.label, json.unit, udata);
-            if (idx >= 0) charts.set(idx, u);
+
+            const results = await Promise.allSettled(keys.map(key => fetchSensorSeries(sid, key)));
+            const sensors = results
+                .filter(result => result.status === 'fulfilled')
+                .map(result => result.value);
+
+            if (sensors.length === 0) {
+                const firstError = results.find(result => result.status === 'rejected');
+                showError(container, firstError?.reason?.message || 'No data');
+                return;
+            }
+
+            const chartMeta = chartMetaForSensors(sensors);
+            const plotData = buildPanelPlotData(sensors);
+            const u = mountChart(container, chartMeta.label, chartMeta.unit, plotData, sensors);
+
+            if (idx >= 0) {
+                DWBCharts.registerPanel(idx, sensors, u, container, plotData, chartMeta);
+            }
         } catch (e) {
             showError(container, 'Network error');
         }
     }
 
-    /* Kick off all panels that have data-key set */
+    /* Kick off all panels that have data-key/data-keys set */
     function initAllPanels() {
-        document.querySelectorAll('.panel-chart-area[data-key]').forEach(el => {
-            if (el.dataset.key) loadPanel(el);
+        document.querySelectorAll('.panel-chart-area[data-keys], .panel-chart-area[data-key]').forEach(el => {
+            if (parseChartKeys(el).length > 0) loadPanel(el);
         });
     }
 
@@ -865,13 +1786,7 @@ function initLeaflet() {
                 const panel = entry.target.closest('.dwb-panel');
                 if (!panel) continue;
                 const idx = Number(panel.dataset.panelIdx);
-                const u   = charts.get(idx);
-                if (!u) continue;
-                const area = panel.querySelector('.panel-chart-area');
-                if (!area) continue;
-                const w = area.clientWidth  || 400;
-                const h = area.clientHeight || 200;
-                u.setSize({ width: w, height: h });
+                DWBCharts.resizePanel(idx);
             }
         });
         document.querySelectorAll('.panel-chart-area').forEach(el => ro.observe(el));
@@ -879,8 +1794,18 @@ function initLeaflet() {
 
     /* Run after DOM + scripts ready */
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initAllPanels);
+        document.addEventListener('DOMContentLoaded', () => {
+            initSyncToggle();
+            initRangeReset();
+            initRangePresets();
+            initPinnedInspectorControls();
+            initAllPanels();
+        });
     } else {
+        initSyncToggle();
+        initRangeReset();
+        initRangePresets();
+        initPinnedInspectorControls();
         initAllPanels();
     }
 })();
