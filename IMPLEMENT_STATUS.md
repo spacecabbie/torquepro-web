@@ -4,11 +4,11 @@ This file is the live handoff tracker for the dashboard sync workbench implement
 
 ## Current Status
 
-Step 11 multi-sensor overlay panels completed. Panels can now carry up to six URL-backed sensors, show active removable sensor chips, render multiple joined uPlot series in one panel, and register every visible sensor with the shared inspector. Sync/inspector/range controls, pinned timestamps, gap rendering, downsampling, time presets, and conservative reference lines remain active.
+Step 11 multi-sensor overlay panels completed and review fixes applied. Panels can carry up to six URL-backed sensors, show active removable sensor chips, render multiple joined uPlot series in one panel, and register every visible compatible sensor with the shared inspector. Overlay adding now works from populated panels, mixed-unit overlays are blocked/hidden, partial load failures are surfaced, chart remount listeners are cleaned up, and inspector time offsets are clearly separated from sensor units.
 
 ## Last Updated
 
-2026-05-13, after Step 11
+2026-05-13, after Step 11 review fixes
 
 ## Branch / Git State At Start Of This Plan
 
@@ -270,12 +270,17 @@ Notes:
 - `buildUrl()` writes up to six sensors per panel.
 - `getCurrentPanelState()` reads sensors from each panel's `data-sensors` JSON.
 - Panel headers now include a `+` button that appends the currently selected sensor to that panel.
+- Selecting a sensor in an empty panel creates the panel immediately; selecting a sensor in a populated panel stages it for the `+` button.
 - Active panel sensors render as removable chips below the header.
 - `loadPanel()` fetches each panel sensor with `Promise.allSettled()` and renders any successful series.
+- Partial load failures render a warning badge in the chart instead of failing silently.
+- Mixed known units are blocked before adding when possible and hidden at render time if they arrive through URL/manual state.
 - Multi-series chart data is built with `uPlot.join()` from each sensor's gap-aware render arrays.
 - `DWBCharts.registerPanel()` now accepts an array of sensor states and computes full range across all series.
 - Shared inspector sees every sensor in multi-sensor panels because `getVisibleSensors()` flattens panel sensor arrays.
 - The grid preset click handler now targets `.grid-pill[data-preset]` so sync/range buttons do not accidentally call `DWB.setGrid()`.
+- Chart remounts clean up wheel/pan window listeners through the uPlot destroy hook.
+- Inspector values show the sensor unit next to the value; millisecond text is only shown as a stale-reading time offset.
 
 ## Risk Log
 

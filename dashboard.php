@@ -315,6 +315,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
                     <option value="">— sensor —</option>
                     <?php foreach ($coldata as $col): ?>
                     <option value="<?= htmlspecialchars((string) ($col['key'] ?? ''), ENT_QUOTES) ?>"
+                        data-unit="<?= htmlspecialchars((string) ($col['unit'] ?? ''), ENT_QUOTES) ?>"
                         <?= ((string) ($col['key'] ?? '') === (string) $sensorKey) ? 'selected' : '' ?>>
                         <?= htmlspecialchars((string) ($col['label'] ?? ''), ENT_QUOTES) ?>
                         <?php if (!empty($col['unit'])): ?>
@@ -381,6 +382,7 @@ $sessionLabel = ($hasSession && isset($seshdates[$session_id]))
                         type="button"
                         data-panel-idx="<?= $i ?>"
                         data-sensor-key="<?= htmlspecialchars((string) $activeKey, ENT_QUOTES) ?>"
+                        data-sensor-unit="<?= htmlspecialchars($chipUnit, ENT_QUOTES) ?>"
                         title="Remove this sensor">
                     <span><?= htmlspecialchars($chipLabel, ENT_QUOTES) ?></span>
                     <?php if ($chipUnit !== ''): ?>
@@ -684,6 +686,16 @@ const DWB = (() => {
         }
     }
 
+    function normalizeUnitForCompare(unit) {
+        return String(unit || '').trim().toLowerCase();
+    }
+
+    function panelKnownUnits(idx) {
+        return Array.from(document.querySelectorAll(`.panel-remove-sensor[data-panel-idx="${idx}"]`))
+            .map(btn => normalizeUnitForCompare(btn.dataset.sensorUnit))
+            .filter(Boolean);
+    }
+
     /** Change sensor for one panel */
     function setPanelSensor(idx, key) {
         const arr = getCurrentPanelState();
@@ -693,7 +705,7 @@ const DWB = (() => {
     }
 
     /** Add one sensor to an existing panel overlay */
-    function addPanelSensor(idx, key) {
+    function addPanelSensor(idx, key, unit = '') {
         if (!key) return;
         const arr = getCurrentPanelState();
         const sensors = arr[idx].sensors || [];
@@ -702,6 +714,14 @@ const DWB = (() => {
             alert('A panel can show up to six sensors.');
             return;
         }
+
+        const nextUnit = normalizeUnitForCompare(unit);
+        const existingUnits = Array.from(new Set(panelKnownUnits(idx)));
+        if (nextUnit && existingUnits.length > 0 && !existingUnits.includes(nextUnit)) {
+            alert('Overlay panels can only combine sensors with the same unit. Clear the panel or use another panel for this sensor.');
+            return;
+        }
+
         arr[idx].sensors = sensors.concat(key);
         arr[idx].sensor = arr[idx].sensors[0] || '';
         window.location = buildUrl(SESSION_ID, GRID_PARAM, arr);
@@ -775,10 +795,19 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', () => DWB.setGrid(btn.dataset.preset));
     });
 
-    // Per-panel sensor selects
+    // Per-panel sensor selects. Populated panels keep the selection staged for the + button.
     document.querySelectorAll('.panel-sensor-select').forEach(sel => {
         sel.addEventListener('change', () => {
-            DWB.setPanelSensor(Number(sel.dataset.panelIdx), sel.value);
+            const panel = sel.closest('.dwb-panel');
+            let sensors = [];
+            try {
+                sensors = panel ? JSON.parse(panel.dataset.sensors || '[]') : [];
+            } catch (e) {
+                sensors = [];
+            }
+            if (!Array.isArray(sensors) || sensors.length === 0) {
+                DWB.setPanelSensor(Number(sel.dataset.panelIdx), sel.value);
+            }
         });
     });
 
@@ -787,7 +816,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const panel = btn.closest('.dwb-panel');
             const sel = panel?.querySelector('.panel-sensor-select');
             if (!sel?.value) return;
-            DWB.addPanelSensor(Number(btn.dataset.panelIdx), sel.value);
+            DWB.addPanelSensor(
+                Number(btn.dataset.panelIdx),
+                sel.value,
+                sel.selectedOptions[0]?.dataset.unit || ''
+            );
         });
     });
 
@@ -1041,7 +1074,15 @@ function initLeaflet() {
                 ],
                 ready: [
                     u => {
-                        attachRangeInteractions(u);
+                        u._dwbCleanupRangeInteractions = attachRangeInteractions(u);
+                    },
+                ],
+                destroy: [
+                    u => {
+                        if (typeof u._dwbCleanupRangeInteractions === 'function') {
+                            u._dwbCleanupRangeInteractions();
+                            u._dwbCleanupRangeInteractions = null;
+                        }
                     },
                 ],
                 click: [
@@ -1395,9 +1436,10 @@ function initLeaflet() {
             chip.appendChild(unit);
         }
 
-        if (Math.abs(deltaMs) > 0) {
+        if (Math.abs(deltaMs) > STALE_VALUE_MS) {
             const delta = document.createElement('span');
             delta.className = 'sync-inspector-delta';
+            delta.title = 'Time offset from cursor';
             delta.textContent = formatDelta(deltaMs);
             chip.appendChild(delta);
         }
@@ -1465,7 +1507,7 @@ function initLeaflet() {
 
     function formatDelta(deltaMs) {
         const sign = deltaMs > 0 ? '+' : '-';
-        return `${sign}${Math.abs(deltaMs)}ms`;
+        return `time ${sign}${Math.abs(deltaMs)} ms`;
     }
 
     function setSyncCursorEnabled(enabled) {
@@ -1538,11 +1580,11 @@ function initLeaflet() {
 
     function attachRangeInteractions(u) {
         const over = u.over;
-        if (!over) return;
+        if (!over) return null;
 
         let panStart = null;
 
-        over.addEventListener('wheel', event => {
+        const onWheel = event => {
             if (!u.scales?.x) return;
             event.preventDefault();
 
@@ -1558,9 +1600,9 @@ function initLeaflet() {
                 max: center + (range.max - center) * zoomFactor,
             });
             syncTimeRange(next, null);
-        }, { passive: false });
+        };
 
-        over.addEventListener('mousedown', event => {
+        const onMouseDown = event => {
             if (event.button !== 0 || !u.scales?.x) return;
 
             panStart = {
@@ -1570,9 +1612,9 @@ function initLeaflet() {
 
             over.classList.add('is-panning');
             event.preventDefault();
-        });
+        };
 
-        window.addEventListener('mousemove', event => {
+        const onMouseMove = event => {
             if (!panStart || !isUsefulRange(panStart.range)) return;
 
             const dx = event.clientX - panStart.x;
@@ -1584,13 +1626,25 @@ function initLeaflet() {
             });
 
             syncTimeRange(next, null);
-        });
+        };
 
-        window.addEventListener('mouseup', () => {
+        const onMouseUp = () => {
             if (!panStart) return;
             panStart = null;
             over.classList.remove('is-panning');
-        });
+        };
+
+        over.addEventListener('wheel', onWheel, { passive: false });
+        over.addEventListener('mousedown', onMouseDown);
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+
+        return () => {
+            over.removeEventListener('wheel', onWheel, { passive: false });
+            over.removeEventListener('mousedown', onMouseDown);
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+        };
     }
 
     function currentChartRange(u) {
@@ -1729,12 +1783,43 @@ function initLeaflet() {
         return uPlot.join(sensors.map(sensor => sensor.plotData));
     }
 
+    function splitCompatibleSensors(sensors) {
+        const targetUnit = sensors
+            .map(sensor => normalizeUnit(sensor.unit))
+            .find(unit => unit !== '') || '';
+
+        if (!targetUnit) {
+            return { compatible: sensors, incompatible: [] };
+        }
+
+        const compatible = [];
+        const incompatible = [];
+
+        sensors.forEach(sensor => {
+            const unit = normalizeUnit(sensor.unit);
+            if (unit === '' || unit === targetUnit) {
+                compatible.push(sensor);
+            } else {
+                incompatible.push(sensor);
+            }
+        });
+
+        return { compatible, incompatible };
+    }
+
     function chartMetaForSensors(sensors) {
         const units = Array.from(new Set(sensors.map(sensor => sensor.unit || '').filter(Boolean)));
         return {
             label: sensors.map(sensor => displayLabel(sensor.label)).join(' + '),
-            unit: units.length === 1 ? units[0] : (units.length > 1 ? 'mixed units' : ''),
+            unit: units.length === 1 ? units[0] : '',
         };
+    }
+
+    function showPanelWarning(container, message) {
+        const warning = document.createElement('div');
+        warning.className = 'panel-chart-warning';
+        warning.textContent = message;
+        container.appendChild(warning);
     }
 
     /* Fetch + render one panel */
@@ -1750,19 +1835,32 @@ function initLeaflet() {
             }
 
             const results = await Promise.allSettled(keys.map(key => fetchSensorSeries(sid, key)));
-            const sensors = results
+            const loadedSensors = results
                 .filter(result => result.status === 'fulfilled')
                 .map(result => result.value);
+            const failedCount = results.filter(result => result.status === 'rejected').length;
+            const { compatible: sensors, incompatible } = splitCompatibleSensors(loadedSensors);
 
             if (sensors.length === 0) {
                 const firstError = results.find(result => result.status === 'rejected');
-                showError(container, firstError?.reason?.message || 'No data');
+                showError(container, firstError?.reason?.message || 'No compatible data');
                 return;
             }
 
             const chartMeta = chartMetaForSensors(sensors);
             const plotData = buildPanelPlotData(sensors);
             const u = mountChart(container, chartMeta.label, chartMeta.unit, plotData, sensors);
+
+            const warnings = [];
+            if (failedCount > 0) {
+                warnings.push(`${failedCount} sensor${failedCount === 1 ? '' : 's'} failed to load`);
+            }
+            if (incompatible.length > 0) {
+                warnings.push(`${incompatible.length} mixed-unit sensor${incompatible.length === 1 ? '' : 's'} hidden`);
+            }
+            if (warnings.length > 0) {
+                showPanelWarning(container, warnings.join('; '));
+            }
 
             if (idx >= 0) {
                 DWBCharts.registerPanel(idx, sensors, u, container, plotData, chartMeta);

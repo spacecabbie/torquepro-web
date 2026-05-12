@@ -257,6 +257,12 @@ body {
     font-size: 11px;
 }
 
+.sync-inspector-delta {
+    border-left: 1px solid rgba(139, 151, 168, 0.28);
+    margin-left: 2px;
+    padding-left: 6px;
+}
+
 .sync-inspector-chip.is-stale {
     border-color: #8a6d3b;
 }
@@ -500,6 +506,22 @@ body {
 
 .panel-chart-area .u-over.is-panning {
     cursor: grabbing;
+}
+
+.panel-chart-warning {
+    position: absolute;
+    right: 8px;
+    top: 8px;
+    z-index: 2;
+    max-width: min(340px, calc(100% - 16px));
+    padding: 4px 7px;
+    border: 1px solid rgba(247, 196, 83, 0.45);
+    border-radius: 4px;
+    background: rgba(18, 18, 37, 0.92);
+    color: #f7c453;
+    font-size: 11px;
+    line-height: 1.25;
+    pointer-events: none;
 }
 
 .panel-message {
