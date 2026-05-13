@@ -12,6 +12,16 @@
 
 ## Latest Updates
 
+### 2026-05-13 — Dashboard Sync Workbench Step 11 Completion (Multi-Sensor Overlay Panels)
+
+Completed Step 11 of the dashboard sync workbench implementation with review fixes applied. Panels now support up to six URL-backed sensors, display active removable sensor chips, render multiple joined uPlot series in one panel, and register all visible compatible sensors with the shared inspector. Overlay adding works from populated panels, mixed-unit overlays are blocked/hidden, partial load failures are surfaced, chart remount listeners are cleaned up, and inspector time offsets are clearly separated from sensor units.
+
+**Files changed**:
+- `dashboard.php` (major UI and JavaScript updates for overlay panels and sync features)
+- `static/css/dashboard.css` (styling for overlays, inspector, and sync controls)
+- `IMPLEMENT_STATUS.md` (status update)
+- `includes/Data/ColumnRepository.php` (minor updates for sensor data)
+
 ### 2026-05-01 — Parser Architecture Finalization (Decoupled Upload Pipeline)
 
 **Major architectural improvement** — completed the intended separation of concerns:

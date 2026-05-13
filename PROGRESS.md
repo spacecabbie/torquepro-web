@@ -21,7 +21,31 @@ Rebuilt the Torque Pro OBD-II data viewer (`dashboard.php`) from a simple 2-sens
 
 ---
 
-## Latest Update (May 1, 2026)
+## Latest Updates
+
+### 2026-05-13 — Dashboard Sync Workbench Step 11 Completion (Multi-Sensor Overlay Panels)
+
+**Step 11 completed with review fixes applied.** Panels now support multi-sensor overlay rendering, shared inspector integration, and advanced sync features.
+
+**Key deliverables**:
+- **Up to 6 sensors per overlay panel** with URL-backed state (`?p[N][s][]=SENSOR1&...`)
+- **Active sensor chips** with removal buttons (×) and inline unit/label display
+- **Multiple uPlot series** rendered in one panel with automatic color assignment
+- **Shared inspector registration** — all visible overlay sensors appear in the cross-hair inspector
+- **Mixed-unit blocking** — panels with incompatible units are hidden with clear error message
+- **Partial load failure handling** — missing sensor data shows "No data" but does not block other overlays
+- **Chart lifecycle cleanup** — remount listeners properly destroyed to prevent memory leaks
+- **Inspector time separation** — time delta and reading units clearly separated
+
+**Files modified**:
+- `dashboard.php` — overlay panel UI, JavaScript state management, sync cursor logic
+- `static/css/dashboard.css` — overlay chip styling, inspector styling, modal rendering fixes
+- `includes/Data/ColumnRepository.php` — minor sensor data updates
+- `IMPLEMENT_STATUS.md`, `history.md` — status tracking
+
+**Status**: Ready for staging deployment. Created `TESTING.md` with comprehensive security review and manual testing checklist.
+
+---
 
 ### 2026-05-01 — Parser Architecture Finalization (Decoupled Upload Pipeline)
 
