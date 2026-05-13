@@ -32,6 +32,7 @@ Torque Pro sends different types of requests:
 3. **Business Logic** (`parser.php`)
    - Metadata extraction (`userShortName*`, units, etc.)
    - Sensor registration / update in `sensors` table
+   - Sensor source classification using GPS keys and calculated prefixes
    - GPS point extraction and validation
    - Session upsert (`sessions` table)
    - Time-series insertion (`sensor_readings`)
@@ -54,3 +55,36 @@ Torque Pro sends different types of requests:
 - All errors are caught and logged to `upload_requests_raw.result = 'error'`
 - The parser rolls back the transaction on failure
 - Processing time is recorded in `processing_time_ms`
+- Reprocessing updates the processed-upload record by `raw_upload_id` when the recommended schema update has been applied
+
+---
+
+## Reprocessing Existing Uploads
+
+Use `reprocess.php` to process pending raw uploads that were saved successfully but do not yet have a processed audit row.
+
+Preview a batch without writing changes:
+
+```text
+reprocess.php?dry=1
+```
+
+Run the actual batch:
+
+```text
+reprocess.php
+```
+
+The current batch size is 25 uploads.
+
+---
+
+## Related Dashboard API
+
+The dashboard reads parsed data from normalized tables through:
+
+```text
+api/sensor.php?sid=SESSION_ID&key=SENSOR_KEY
+```
+
+The endpoint validates the session ID and sensor key, then returns label, unit, and timestamp/value pairs for chart rendering.

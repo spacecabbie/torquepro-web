@@ -21,8 +21,12 @@ The Torque Pro Web Logger is built with a **clean, decoupled architecture** desi
 | `upload_data.php`           | Thin receiver. Validates request, writes to `upload_requests_raw`, then calls parser. |
 | `parser.php`                | Business logic layer. Fetches raw data from DB and processes everything. |
 | `includes/Config/Torque.php`| Centralized configuration (GPS keys, calculated prefixes, OBD mappings). |
-| `reprocess.php`             | Web interface for reprocessing old uploads. |
-| Normalized Schema           | `sensors`, `sensor_readings`, `sessions`, `gps_points`, audit tables. |
+| `dashboard.php`             | Interactive workbench for session analysis, overlays, maps, CSV export, and saved layouts. |
+| `api/sensor.php`            | Read-only JSON endpoint for one session/sensor time series. |
+| `api/dashboard_save.php`    | Saves dashboard layout state and returns a reusable slug link. |
+| `d.php`                     | Resolves saved dashboard slugs and redirects to equivalent dashboard query strings. |
+| `reprocess.php`             | Web interface for reprocessing pending raw uploads. |
+| Normalized Schema           | `sensors`, `sensor_readings`, `sessions`, `gps_points`, audit tables, and optional `saved_dashboards`. |
 
 ---
 
@@ -34,6 +38,19 @@ The Torque Pro Web Logger is built with a **clean, decoupled architecture** desi
 4. Parser fetches the raw query string from the database
 5. Business logic runs (metadata extraction, sensor upsert, GPS handling, etc.)
 6. Results are stored in `sensor_readings`, `gps_points`, and `upload_requests_processed`
+7. Dashboard pages read normalized data through repository classes and per-sensor JSON endpoints
+
+---
+
+## Dashboard State
+
+The dashboard is intentionally URL-driven. Session, grid, panel spans, and selected sensors are encoded in the query string:
+
+```text
+dashboard.php?id=123&grid=2x3&p[0][s][]=kd&p[0][s][]=kf&p[0][cs]=2
+```
+
+Saved dashboards store the same minimal state as JSON in `saved_dashboards`. The `d.php` resolver converts a slug back into the canonical dashboard URL.
 
 ---
 
@@ -47,6 +64,7 @@ This new architecture provides:
 - Easier support for multiple logging apps in the future
 - Clear audit trail
 - Independent reprocessing capability
+- Shareable dashboard state without duplicating chart data
 
 ---
 
